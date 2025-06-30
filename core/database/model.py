@@ -1,12 +1,11 @@
-
 """
 SQLAlchemy models for the expenses tracking tool.
 """
 import datetime
 from typing import List, Optional
+import pytz
 
 from sqlalchemy import (
-    Column,
     Integer,
     String,
     Numeric,
@@ -14,10 +13,11 @@ from sqlalchemy import (
     ForeignKey,
     Text,
 )
-from sqlalchemy.orm import relationship, declarative_base
+from sqlalchemy.orm import relationship, declarative_base, Mapped, mapped_column
 
 
 Base = declarative_base()
+indian_timezone = pytz.timezone("Asia/Kolkata")
 
 
 class Category(Base):
@@ -36,16 +36,16 @@ class Category(Base):
 
     __tablename__ = "categories"
 
-    id: int = Column(Integer, primary_key=True)
-    name: str = Column(String, nullable=False)
-    parent_id: Optional[int] = Column(Integer, ForeignKey("categories.id"))
-    created_at: datetime.datetime = Column(DateTime, default=datetime.datetime.utcnow)
-    updated_at: datetime.datetime = Column(
-        DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    parent_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("categories.id"))
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=datetime.datetime.now(indian_timezone))
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, default=datetime.datetime.now(indian_timezone), onupdate=datetime.datetime.now(indian_timezone)
     )
 
-    parent: Optional["Category"] = relationship("Category", remote_side=[id])
-    transactions: List["Transaction"] = relationship("Transaction", back_populates="category")
+    parent: Mapped[Optional["Category"]] = relationship("Category", remote_side=[id])
+    transactions: Mapped[List["Transaction"]] = relationship("Transaction", back_populates="category")
 
     def __repr__(self) -> str:
         return f"<Category(id={self.id}, name='{self.name}')>"
@@ -69,18 +69,18 @@ class Transaction(Base):
 
     __tablename__ = "transactions"
 
-    id: int = Column(Integer, primary_key=True)
-    description: Optional[str] = Column(String)
-    amount: float = Column(Numeric, nullable=False)
-    transaction_date: datetime.datetime = Column(DateTime, nullable=False)
-    category_id: Optional[int] = Column(Integer, ForeignKey("categories.id"))
-    embedding: Optional[str] = Column(Text)  # Using Text to store vector as string for db compatibility
-    created_at: datetime.datetime = Column(DateTime, default=datetime.datetime.now())
-    updated_at: datetime.datetime = Column(
-        DateTime, default=datetime.datetime.now(), onupdate=datetime.datetime.now()
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    description: Mapped[Optional[str]] = mapped_column(String)
+    amount: Mapped[float] = mapped_column(Numeric, nullable=False)
+    transaction_date: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
+    category_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("categories.id"))
+    embedding: Mapped[Optional[str]] = mapped_column(Text)  # Using Text to store vector as string for db compatibility
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=datetime.datetime.now(indian_timezone))
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, default=datetime.datetime.now(indian_timezone), onupdate=datetime.datetime.now(indian_timezone)
     )
 
-    category: Optional["Category"] = relationship("Category", back_populates="transactions")
+    category: Mapped[Optional["Category"]] = relationship("Category", back_populates="transactions")
 
     def __repr__(self) -> str:
         return f"<Transaction(id={self.id}, description='{self.description}', amount={self.amount})>"
