@@ -25,7 +25,7 @@ Tests for the Category model CRUD operations:
 | `test_update_nonexistent_category` | Validates behavior when updating non-existent categories |
 | `test_delete_category` | Tests category deletion |
 | `test_delete_nonexistent_category` | Verifies behavior when deleting non-existent categories |
-| `test_category_hierarchy` | Tests parent-child relationship navigation by asserting `parent_id` directly, as objects returned from `Database` methods are detached from the session.
+| `test_category_hierarchy` | Tests multi-level and multiple-child category hierarchy relationships, including lazy-loaded parent and children associations. |
 
 ### Transaction CRUD Tests (`test_transaction_crud.py`)
 
@@ -43,7 +43,7 @@ Tests for the Transaction model CRUD operations:
 | `test_update_nonexistent_transaction` | Validates behavior when updating non-existent transactions |
 | `test_delete_transaction` | Tests transaction deletion |
 | `test_delete_nonexistent_transaction` | Verifies behavior when deleting non-existent transactions |
-| `test_transaction_category_relationship` | Tests the relationship between transactions and categories by retrieving both objects separately and asserting their IDs, as objects returned from `Database` methods are detached from the session.
+| `test_transaction_category_relationship` | Tests the lazy-loaded relationship between transactions and categories. |
 
 ## Test Coverage
 
@@ -54,9 +54,9 @@ The test suite covers:
    - Edge cases (non-existent records)
 
 2. **Relationships**
-   - Category parent-child hierarchies
+   - Category parent-child hierarchies (multi-level and multiple-child)
    - Transaction-category associations
-   - **Note on Relationship Testing**: Due to the `Database` class returning detached SQLAlchemy objects, direct access to lazy-loaded relationships (e.g., `transaction.category.name`) is not possible outside the session. Instead, relationship integrity is verified by explicitly retrieving related objects and asserting their foreign key relationships (e.g., `transaction.category_id == category.id`). This ensures stringent checks without requiring changes to the `Database` class's session management.
+   - Lazy-loaded relationships
 
 3. **Data Validation**
    - Field value persistence
@@ -75,12 +75,12 @@ Execute the test suite using:
 
 ```bash
 # Run all database tests
-pytest tests/db_tests
+uv run pytest tests/db_tests
 
 # Run with verbose output
-pytest -v tests/db_tests
+uv run pytest -v tests/db_tests
 
 # Run specific test files
-pytest tests/db_tests/test_category_crud.py
-pytest tests/db_tests/test_transaction_crud.py
+uv run pytest tests/db_tests/test_category_crud.py
+uv run pytest tests/db_tests/test_transaction_crud.py
 ```

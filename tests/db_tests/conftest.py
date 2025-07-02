@@ -19,10 +19,11 @@ TEST_DATABASE_URL = "sqlite:///:memory:"
 
 
 @pytest.fixture(scope="function")
-def db_instance():
+def db_instance(monkeypatch):
     """
     Provides a clean, isolated database instance for each test function.
     - Creates a new in-memory SQLite database for each test.
+    - Monkeypatches the Database.get_session method to provide an isolated session.
     - Yields a `Database` manager instance connected to this test database.
     - Ensures the database is properly torn down after each test.
     """
@@ -32,12 +33,20 @@ def db_instance():
     # Create all tables
     Base.metadata.create_all(engine)
     
+    # Create a sessionmaker
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    session = SessionLocal()
+
     # Create a Database instance
     db = Database(db_url=TEST_DATABASE_URL)
+
+    # Monkeypatch the get_session method to return our test session
+    monkeypatch.setattr(db, "get_session", lambda: session)
     
     try:
         yield db
     finally:
-        # Drop all tables to ensure isolation between tests
+        # Close the session and drop all tables
+        session.close()
         Base.metadata.drop_all(engine)
         engine.dispose()

@@ -114,15 +114,50 @@ class TestCategoryCRUD:
         assert result is False
 
     def test_category_hierarchy(self, db_instance: Database):
-        """Test category hierarchy relationships."""
+        """Test multi-level and multiple-child category hierarchy relationships."""
         # Arrange
-        parent = db_instance.create_category(name="Food")
-        child = db_instance.create_category(name="Groceries", parent_id=parent.id)
+        # Level 1
+        food = db_instance.create_category(name="Food")
         
+        # Level 2
+        groceries = db_instance.create_category(name="Groceries", parent_id=food.id)
+        dining = db_instance.create_category(name="Dining", parent_id=food.id)
+        
+        # Level 3
+        fruits = db_instance.create_category(name="Fruits", parent_id=groceries.id)
+        vegetables = db_instance.create_category(name="Vegetables", parent_id=groceries.id)
+
         # Act
-        retrieved_parent = db_instance.get_category(parent.id)
-        retrieved_child = db_instance.get_category(child.id)
-        
+        retrieved_food = db_instance.get_category(food.id)
+        retrieved_groceries = db_instance.get_category(groceries.id)
+        retrieved_dining = db_instance.get_category(dining.id)
+        retrieved_fruits = db_instance.get_category(fruits.id)
+        retrieved_vegetables = db_instance.get_category(vegetables.id)
+
         # Assert
-        assert retrieved_parent.parent_id is None
-        assert retrieved_child.parent_id == parent.id
+        # Check parent-child relationships
+        assert retrieved_food.parent is None
+        assert retrieved_groceries.parent.id == food.id
+        assert retrieved_dining.parent.id == food.id
+        assert retrieved_fruits.parent.id == groceries.id
+        assert retrieved_vegetables.parent.id == groceries.id
+
+        # Check children relationships
+        all_categories = db_instance.get_all_categories()
+        
+        food_children = [c.name for c in all_categories if c.parent_id == retrieved_food.id]
+        assert "Groceries" in food_children
+        assert "Dining" in food_children
+        
+        groceries_children = [c.name for c in all_categories if c.parent_id == retrieved_groceries.id]
+        assert "Fruits" in groceries_children
+        assert "Vegetables" in groceries_children
+        
+        dining_children = [c.name for c in all_categories if c.parent_id == retrieved_dining.id]
+        assert not dining_children
+        
+        fruits_children = [c.name for c in all_categories if c.parent_id == retrieved_fruits.id]
+        assert not fruits_children
+        
+        vegetables_children = [c.name for c in all_categories if c.parent_id == retrieved_vegetables.id]
+        assert not vegetables_children

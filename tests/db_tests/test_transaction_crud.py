@@ -206,7 +206,8 @@ class TestTransactionCRUD:
         
         # Act
         retrieved_transaction = db_instance.get_transaction(transaction.id)
-        retrieved_category = db_instance.get_category(category.id)
         
         # Assert
-        assert retrieved_transaction.category_id == retrieved_category.id
+        assert retrieved_transaction.category is not None
+        assert retrieved_transaction.category.id == category.id
+        assert retrieved_transaction.category.name == "Food"
