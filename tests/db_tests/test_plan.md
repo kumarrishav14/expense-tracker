@@ -2,14 +2,13 @@
 
 ## Overview
 
-This document outlines the test suite for the expenses tracking tool database components. The tests focus on validating the CRUD operations for both Category and Transaction models defined in `core/database/model.py` and implemented in `core/database/crud.py`.
+This document outlines the test suite for the expenses tracking tool database components. The tests focus on validating the CRUD operations for both Category and Transaction models defined in `core/database/model.py` and implemented in `core/database/db_manager.py`.
 
 ## Test Suite Structure
 
 ### Configuration and Fixtures (`conftest.py`)
 
-- **db_engine**: Creates an in-memory SQLite database for isolated testing
-- **db_session**: Provides a fresh database session for each test
+- **db_instance**: Provides a clean, isolated `Database` manager instance for each test function, connected to an in-memory SQLite database. This ensures test independence and proper resource cleanup.
 
 ### Category CRUD Tests (`test_category_crud.py`)
 
@@ -26,7 +25,7 @@ Tests for the Category model CRUD operations:
 | `test_update_nonexistent_category` | Validates behavior when updating non-existent categories |
 | `test_delete_category` | Tests category deletion |
 | `test_delete_nonexistent_category` | Verifies behavior when deleting non-existent categories |
-| `test_category_hierarchy` | Tests parent-child relationship navigation |
+| `test_category_hierarchy` | Tests parent-child relationship navigation by asserting `parent_id` directly, as objects returned from `Database` methods are detached from the session.
 
 ### Transaction CRUD Tests (`test_transaction_crud.py`)
 
@@ -44,7 +43,7 @@ Tests for the Transaction model CRUD operations:
 | `test_update_nonexistent_transaction` | Validates behavior when updating non-existent transactions |
 | `test_delete_transaction` | Tests transaction deletion |
 | `test_delete_nonexistent_transaction` | Verifies behavior when deleting non-existent transactions |
-| `test_transaction_category_relationship` | Tests the relationship between transactions and categories |
+| `test_transaction_category_relationship` | Tests the relationship between transactions and categories by retrieving both objects separately and asserting their IDs, as objects returned from `Database` methods are detached from the session.
 
 ## Test Coverage
 
@@ -57,6 +56,7 @@ The test suite covers:
 2. **Relationships**
    - Category parent-child hierarchies
    - Transaction-category associations
+   - **Note on Relationship Testing**: Due to the `Database` class returning detached SQLAlchemy objects, direct access to lazy-loaded relationships (e.g., `transaction.category.name`) is not possible outside the session. Instead, relationship integrity is verified by explicitly retrieving related objects and asserting their foreign key relationships (e.g., `transaction.category_id == category.id`). This ensures stringent checks without requiring changes to the `Database` class's session management.
 
 3. **Data Validation**
    - Field value persistence

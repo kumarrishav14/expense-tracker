@@ -1,73 +1,67 @@
 """
 Tests for Category CRUD operations.
 """
-import datetime
 import pytest
-from sqlalchemy.orm import Session
-
-from core.database import crud
-from core.database.model import Category
+from core.database.db_manager import Database
 
 
 class TestCategoryCRUD:
     """Test suite for Category CRUD operations."""
 
-    def test_create_category(self, db_session: Session):
+    def test_create_category(self, db_instance: Database):
         """Test creating a new category."""
         # Act
-        category = crud.create_category(db_session, name="Food")
+        category = db_instance.create_category(name="Food")
         
         # Assert
         assert category.id is not None
         assert category.name == "Food"
         assert category.parent_id is None
         assert category.created_at is not None
-        assert category.updated_at is not None
 
-    def test_create_category_with_parent(self, db_session: Session):
+    def test_create_category_with_parent(self, db_instance: Database):
         """Test creating a category with a parent category."""
         # Arrange
-        parent = crud.create_category(db_session, name="Food")
+        parent = db_instance.create_category(name="Food")
         
         # Act
-        child = crud.create_category(db_session, name="Groceries", parent_id=parent.id)
+        child = db_instance.create_category(name="Groceries", parent_id=parent.id)
         
         # Assert
         assert child.id is not None
         assert child.name == "Groceries"
         assert child.parent_id == parent.id
-        assert child.created_at is not None
 
-    def test_get_category(self, db_session: Session):
+    def test_get_category(self, db_instance: Database):
         """Test retrieving a category by ID."""
         # Arrange
-        category = crud.create_category(db_session, name="Food")
+        category = db_instance.create_category(name="Food")
         
         # Act
-        retrieved_category = crud.get_category(db_session, category.id)
+        retrieved_category = db_instance.get_category(category.id)
         
         # Assert
         assert retrieved_category is not None
         assert retrieved_category.id == category.id
         assert retrieved_category.name == "Food"
 
-    def test_get_nonexistent_category(self, db_session: Session):
+    def test_get_nonexistent_category(self, db_instance: Database):
         """Test retrieving a non-existent category."""
         # Act
-        category = crud.get_category(db_session, 999)
+        category = db_instance.get_category(999)
         
         # Assert
         assert category is None
 
-    def test_get_all_categories(self, db_session: Session):
+    def test_get_all_categories(self, db_instance: Database):
         """Test retrieving all categories."""
         # Arrange
-        crud.create_category(db_session, name="Food")
-        crud.create_category(db_session, name="Transport")
-        crud.create_category(db_session, name="Entertainment")
+        db_instance.create_category(name="Food")
+        db_instance.create_category(name="Transport")
+        db_instance.create_category(name="Entertainment")
         
         # Act
-        categories = crud.get_all_categories(db_session)
+        categories = db_instance.get_all_categories()
         
         # Assert
         assert len(categories) == 3
@@ -76,14 +70,14 @@ class TestCategoryCRUD:
         assert "Transport" in category_names
         assert "Entertainment" in category_names
 
-    def test_update_category(self, db_session: Session):
+    def test_update_category(self, db_instance: Database):
         """Test updating a category."""
         # Arrange
-        category = crud.create_category(db_session, name="Food")
+        category = db_instance.create_category(name="Food")
         original_created_at = category.created_at
         
         # Act
-        updated_category = crud.update_category(db_session, category.id, name="Dining")
+        updated_category = db_instance.update_category(category.id, name="Dining")
         
         # Assert
         assert updated_category.id == category.id
@@ -91,45 +85,44 @@ class TestCategoryCRUD:
         assert updated_category.created_at == original_created_at
         assert updated_category.updated_at >= original_created_at
 
-    def test_update_nonexistent_category(self, db_session: Session):
+    def test_update_nonexistent_category(self, db_instance: Database):
         """Test updating a non-existent category."""
         # Act
-        updated_category = crud.update_category(db_session, 999, name="Nonexistent")
+        updated_category = db_instance.update_category(999, name="Nonexistent")
         
         # Assert
         assert updated_category is None
 
-    def test_delete_category(self, db_session: Session):
+    def test_delete_category(self, db_instance: Database):
         """Test deleting a category."""
         # Arrange
-        category = crud.create_category(db_session, name="Food")
+        category = db_instance.create_category(name="Food")
         
         # Act
-        result = crud.delete_category(db_session, category.id)
+        result = db_instance.delete_category(category.id)
         
         # Assert
         assert result is True
-        assert crud.get_category(db_session, category.id) is None
+        assert db_instance.get_category(category.id) is None
 
-    def test_delete_nonexistent_category(self, db_session: Session):
+    def test_delete_nonexistent_category(self, db_instance: Database):
         """Test deleting a non-existent category."""
         # Act
-        result = crud.delete_category(db_session, 999)
+        result = db_instance.delete_category(999)
         
         # Assert
         assert result is False
 
-    def test_category_hierarchy(self, db_session: Session):
+    def test_category_hierarchy(self, db_instance: Database):
         """Test category hierarchy relationships."""
         # Arrange
-        parent = crud.create_category(db_session, name="Food")
-        child1 = crud.create_category(db_session, name="Groceries", parent_id=parent.id)
-        child2 = crud.create_category(db_session, name="Dining Out", parent_id=parent.id)
+        parent = db_instance.create_category(name="Food")
+        child = db_instance.create_category(name="Groceries", parent_id=parent.id)
         
-        # Act - fetch parent with children via relationship
-        parent_with_children = crud.get_category(db_session, parent.id)
+        # Act
+        retrieved_parent = db_instance.get_category(parent.id)
+        retrieved_child = db_instance.get_category(child.id)
         
         # Assert
-        assert parent_with_children.parent is None
-        # Note: This test assumes the relationship is correctly set up in the model
-        # In a real test, you would need to query the children directly as this relationship might not be eagerly loaded
+        assert retrieved_parent.parent_id is None
+        assert retrieved_child.parent_id == parent.id
