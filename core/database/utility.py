@@ -1,4 +1,3 @@
-
 """
 Admin related utility tasks for the database.
 
@@ -18,57 +17,58 @@ Examples:
     python -m core.database.utility delete --all
 """
 import argparse
-from sqlalchemy import inspect
+from sqlalchemy import create_engine, inspect
+from sqlalchemy.orm import sessionmaker, Session
 import pandas as pd
 
 from core.database.model import Base
-from core.database.db_manager import Database
 
+DATABASE_URL = "sqlite:///expenses.db"
 
-def visualise_table(db: Database, table_name: str):
+def visualise_table(session: Session, table_name: str):
     """
     Visualises a particular table as a simple read and print.
 
     Args:
-        db (Database): The Database instance.
+        session (Session): Database session.
         table_name (str): Name of the table to visualise.
     """
     try:
-        df = pd.read_sql_table(table_name, db.engine)
+        df = pd.read_sql_table(table_name, session.bind)
         print(f"Table: {table_name}")
         print(df)
     except Exception as e:
         print(f"Error visualising table {table_name}: {e}")
 
 
-def visualise_all_tables(db: Database):
+def visualise_all_tables(session: Session):
     """
     Visualises all tables of DB as a simple read and print.
 
     Args:
-        db (Database): The Database instance.
+        session (Session): Database session.
     """
-    inspector = inspect(db.engine)
+    inspector = inspect(session.bind)
     table_names = inspector.get_table_names()
     if not table_names:
         print("No tables found in the database.")
         return
     for table_name in table_names:
-        visualise_table(db, table_name)
+        visualise_table(session, table_name)
         print("\n")
 
 
-def delete_table(db: Database, table_name: str):
+def delete_table(session: Session, table_name: str):
     """
     Deletes a particular table from the DB.
 
     Args:
-        db (Database): The Database instance.
+        session (Session): Database session.
         table_name (str): Name of the table to delete.
     """
     try:
         table = Base.metadata.tables[table_name]
-        table.drop(db.engine)
+        table.drop(session.bind)
         print(f"Table '{table_name}' deleted successfully.")
     except KeyError:
         print(f"Error: Table '{table_name}' not found.")
@@ -76,15 +76,15 @@ def delete_table(db: Database, table_name: str):
         print(f"Error deleting table {table_name}: {e}")
 
 
-def delete_all_tables(db: Database):
+def delete_all_tables(session: Session):
     """
     Deletes all tables from DB.
 
     Args:
-        db (Database): The Database instance.
+        session (Session): Database session.
     """
     try:
-        Base.metadata.drop_all(db.engine)
+        Base.metadata.drop_all(session.bind)
         print("All tables deleted successfully.")
     except Exception as e:
         print(f"Error deleting all tables: {e}")
@@ -108,15 +108,20 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    db_instance = Database()
+    engine = create_engine(DATABASE_URL)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    db_session = SessionLocal()
 
-    if args.command == "visualise":
-        if args.all:
-            visualise_all_tables(db_instance)
-        else:
-            visualise_table(db_instance, args.table_name)
-    elif args.command == "delete":
-        if args.all:
-            delete_all_tables(db_instance)
-        else:
-            delete_table(db_instance, args.table_name)
+    try:
+        if args.command == "visualise":
+            if args.all:
+                visualise_all_tables(db_session)
+            else:
+                visualise_table(db_session, args.table_name)
+        elif args.command == "delete":
+            if args.all:
+                delete_all_tables(db_session)
+            else:
+                delete_table(db_session, args.table_name)
+    finally:
+        db_session.close()
