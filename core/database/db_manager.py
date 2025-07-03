@@ -98,7 +98,7 @@ class Database:
     def transaction_scope(self) -> Session:
         """
         Provides a transactional scope around a series of operations.
-        Creates a new session for atomic operations with automatic rollback support.
+        Uses the main application session with transaction control for data consistency.
         
         Usage:
             with db.transaction_scope() as session:
@@ -108,9 +108,15 @@ class Database:
                 # All operations commit together or rollback on error
         
         Yields:
-            Session: A new database session with transaction control.
+            Session: The main application session with transaction control.
         """
-        session = self._session_local()
+        session = self.get_session()
+        
+        # Begin a transaction if not already in one
+        if not session.in_transaction():
+            session.begin()
+            print("DEBUG: Started new transaction")
+        
         try:
             yield session
             session.commit()
@@ -119,9 +125,6 @@ class Database:
             session.rollback()
             print(f"DEBUG: Transaction rolled back due to error: {str(e)}")
             raise
-        finally:
-            session.close()
-            print("DEBUG: Transaction session closed")
     
     def handle_constraint_error(self, error: Exception) -> Dict[str, Any]:
         """
@@ -155,6 +158,13 @@ class Database:
                 "error_category": "data_type_error",
                 "is_retryable": False,
                 "suggested_action": "validate_data_types"
+            })
+        else:
+            # Handle non-SQLAlchemy errors (ValueError, DateParseError, etc.)
+            error_info.update({
+                "error_category": "data_validation_error",
+                "is_retryable": False,
+                "suggested_action": "validate_input_data"
             })
         
         print(f"DEBUG: Classified error - {error_info['error_category']}: {error_info['error_message']}")
