@@ -45,6 +45,31 @@ Tests for the Transaction model CRUD operations:
 | `test_delete_nonexistent_transaction` | Verifies behavior when deleting non-existent transactions |
 | `test_transaction_category_relationship` | Tests the lazy-loaded relationship between transactions and categories. |
 
+### Database Interface Tests (`test_db_interface.py`)
+
+Tests for the DatabaseInterface class that acts as an interface between pandas DataFrames and database tables:
+
+| Test Category | Tests | Description |
+|---------------|-------|-------------|
+| **Category Table Operations** | `test_get_categories_table_empty` | Validates retrieval of empty categories table |
+| | `test_get_categories_table_simple_categories` | Tests retrieval of simple categories without hierarchy |
+| | `test_get_categories_table_with_hierarchy` | Tests retrieval of categories with parent-child relationships |
+| **Transaction Table Operations** | `test_get_transactions_table_empty` | Validates retrieval of empty transactions table |
+| | `test_get_transactions_table_without_categories` | Tests transactions without category assignments |
+| | `test_get_transactions_table_with_parent_categories_only` | Tests transactions with top-level categories |
+| | `test_get_transactions_table_with_sub_categories` | Tests transactions with sub-categories (parent-child) |
+| | `test_get_transactions_table_mixed_categories` | Tests mix of top-level and sub-categories |
+| **Category Resolution** | `test_resolve_category_id_*` | Tests internal category ID resolution methods |
+| **Category Hierarchy Creation** | `test_create_category_hierarchy_*` | Tests auto-creation of category hierarchies |
+| **Transaction Saving** | `test_save_transactions_table_*` | Tests saving DataFrames to database with various scenarios |
+| **Real-World Scenarios** | `test_realistic_csv_import_with_errors_and_retry_creates_duplicates` | CSV import with errors, user fixes and re-imports entire file |
+| | `test_realistic_batch_processing_failure_and_full_retry` | Batch processing fails partway, entire batch retried |
+| | `test_realistic_user_workflow_multiple_import_attempts` | User makes multiple import attempts with incremental fixes |
+| | `test_realistic_concurrent_user_scenario_same_data` | Same data imported from multiple sources |
+| | `test_realistic_data_validation_edge_cases_with_duplicates` | Edge case data validation leading to duplicates |
+| **Integration & Workflow** | `test_full_workflow_categories_and_transactions` | End-to-end workflow testing |
+| | `test_interface_isolation_from_sql_details` | Validates SQL complexity isolation |
+
 ## Test Coverage
 
 The test suite covers:
@@ -61,6 +86,15 @@ The test suite covers:
 3. **Data Validation**
    - Field value persistence
    - Timestamp handling (created_at, updated_at)
+
+4. **Database Interface Operations**
+   - Pandas DataFrame to SQL conversion
+   - SQL to pandas DataFrame conversion
+   - Category and sub-category denormalization
+   - Auto-creation of category hierarchies
+   - Interface isolation from SQL complexity
+   - Mixed datetime format handling
+   - Partial failure scenarios
 
 ## Test Independence
 
@@ -83,4 +117,8 @@ uv run pytest -v tests/db_tests
 # Run specific test files
 uv run pytest tests/db_tests/test_category_crud.py
 uv run pytest tests/db_tests/test_transaction_crud.py
+uv run pytest tests/db_tests/test_db_interface.py
+
+# Run with coverage report
+uv run pytest --cov=core.database tests/db_tests
 ```
