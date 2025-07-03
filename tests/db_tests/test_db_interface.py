@@ -1,19 +1,22 @@
 """
 Tests for DatabaseInterface - the interface between pandas DataFrames and database tables.
 
-This test suite validates the DatabaseInterface class which:
-1. Acts as an interface between pandas tables and SQL operations
+This test suite validates the enhanced DatabaseInterface class which:
+1. Acts as an interface between pandas tables and SQL operations with atomic transaction support
 2. Separates frontend and other components from SQL infrastructure
-3. Helps retrieve data from SQL tables
+3. Helps retrieve data from SQL tables with enhanced error handling
 4. For transaction table, identifies relations and merges tables returning merged pandas table
 5. Adds category and sub-category columns while merging tables
-6. Helps save new data to SQL DB
+6. Helps save new data to SQL DB using atomic transactions and batch operations
+7. Provides comprehensive error handling with constraint classification
+8. Supports session-aware operations for better transaction management
 """
 import pytest
 import pandas as pd
 import datetime
 from decimal import Decimal
 import pytz
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from core.database.db_interface import DatabaseInterface
 from core.database.db_manager import Database
@@ -1035,3 +1038,362 @@ class TestDatabaseInterface:
         
         transactions = db_interface.db.get_all_transactions()
         assert all(t.category_id is not None for t in transactions)
+
+    # --- Enhanced Atomic Transaction Tests ---
+
+    def test_atomic_transaction_save_success(self, db_interface: DatabaseInterface):
+        """Test that save_transactions_table uses atomic transactions successfully."""
+        # Arrange
+        transactions_df = pd.DataFrame({
+            'description': ['Coffee', 'Lunch', 'Dinner'],
+            'amount': [5.50, 12.75, 18.25],
+            'transaction_date': ['2024-01-15 08:00:00', '2024-01-15 12:00:00', '2024-01-15 19:00:00'],
+            'category': ['Food', 'Food', 'Food'],
+            'sub_category': ['', 'Dining', 'Dining']
+        })
+        
+        # Act
+        result = db_interface.save_transactions_table(transactions_df)
+        
+        # Assert
+        assert result is True
+        
+        # Verify all transactions were saved atomically
+        saved_transactions = db_interface.db.get_all_transactions()
+        assert len(saved_transactions) == 3
+        
+        # Verify categories were created atomically
+        categories = db_interface.db.get_all_categories()
+        category_names = [c.name for c in categories]
+        assert 'Food' in category_names
+        assert 'Dining' in category_names
+        
+        # Verify hierarchy was created correctly
+        dining_category = next(c for c in categories if c.name == 'Dining')
+        food_category = next(c for c in categories if c.name == 'Food')
+        assert dining_category.parent_id == food_category.id
+
+    def test_atomic_transaction_rollback_on_error(self, db_interface: DatabaseInterface):
+        """Test that atomic transactions rollback completely on error."""
+        # Arrange - Create a DataFrame with one invalid row that will cause failure
+        transactions_df = pd.DataFrame({
+            'description': ['Valid Coffee', 'Invalid Amount', 'Valid Lunch'],
+            'amount': [5.50, 'not_a_number', 12.75],  # Middle row has invalid amount
+            'transaction_date': ['2024-01-15 08:00:00', '2024-01-15 09:00:00', '2024-01-15 12:00:00'],
+            'category': ['Food', 'Food', 'Food'],
+            'sub_category': ['', '', '']
+        })
+        
+        # Act
+        result = db_interface.save_transactions_table(transactions_df)
+        
+        # Assert
+        assert result is False  # Should fail due to invalid data
+        
+        # Verify NO transactions were saved (complete rollback)
+        saved_transactions = db_interface.db.get_all_transactions()
+        assert len(saved_transactions) == 0
+        
+        # Verify NO categories were created (complete rollback)
+        categories = db_interface.db.get_all_categories()
+        assert len(categories) == 0
+
+    def test_atomic_transaction_with_category_creation(self, db_interface: DatabaseInterface):
+        """Test atomic transaction with automatic category hierarchy creation."""
+        # Arrange
+        transactions_df = pd.DataFrame({
+            'description': ['Grocery shopping', 'Restaurant dinner', 'Bus ticket'],
+            'amount': [67.89, 125.50, 3.50],
+            'transaction_date': ['2024-01-20 11:00:00', '2024-01-20 20:30:00', '2024-01-21 08:30:00'],
+            'category': ['Food', 'Food', 'Transport'],
+            'sub_category': ['Groceries', 'Dining', '']
+        })
+        
+        # Act
+        result = db_interface.save_transactions_table(transactions_df)
+        
+        # Assert
+        assert result is True
+        
+        # Verify all transactions and categories were created atomically
+        saved_transactions = db_interface.db.get_all_transactions()
+        assert len(saved_transactions) == 3
+        
+        categories = db_interface.db.get_all_categories()
+        assert len(categories) == 4  # Food, Groceries, Dining, Transport
+        
+        # Verify hierarchy was created correctly in atomic operation
+        food_category = next(c for c in categories if c.name == 'Food' and c.parent is None)
+        groceries_category = next(c for c in categories if c.name == 'Groceries')
+        dining_category = next(c for c in categories if c.name == 'Dining')
+        transport_category = next(c for c in categories if c.name == 'Transport' and c.parent is None)
+        
+        assert groceries_category.parent_id == food_category.id
+        assert dining_category.parent_id == food_category.id
+        assert transport_category.parent is None
+
+    def test_session_aware_category_resolution(self, db_interface: DatabaseInterface):
+        """Test that category resolution works within session context."""
+        # Arrange - Create some existing categories
+        existing_food = db_interface.db.create_category(name="Food")
+        existing_groceries = db_interface.db.create_category(name="Groceries", parent_id=existing_food.id)
+        
+        # Test _resolve_category_id with session
+        session = db_interface.db.get_session()
+        
+        # Act & Assert
+        # Test resolving existing top-level category
+        food_id = db_interface._resolve_category_id("Food", "", session=session)
+        assert food_id == existing_food.id
+        
+        # Test resolving existing sub-category
+        groceries_id = db_interface._resolve_category_id("Food", "Groceries", session=session)
+        assert groceries_id == existing_groceries.id
+        
+        # Test resolving non-existent category
+        nonexistent_id = db_interface._resolve_category_id("NonExistent", "", session=session)
+        assert nonexistent_id is None
+        
+        # Test resolving non-existent sub-category
+        nonexistent_sub_id = db_interface._resolve_category_id("Food", "NonExistent", session=session)
+        assert nonexistent_sub_id is None
+
+    def test_create_category_hierarchy_in_session(self, db_interface: DatabaseInterface):
+        """Test category hierarchy creation within session context."""
+        # Arrange
+        session = db_interface.db.get_session()
+        
+        # Act - Create hierarchy within session
+        result = db_interface._create_category_hierarchy_in_session("Food", "Restaurants", session)
+        session.commit()  # Manual commit for test
+        
+        # Assert
+        assert result is True
+        
+        # Verify categories were created
+        categories = db_interface.db.get_all_categories()
+        assert len(categories) == 2
+        
+        food_category = next(c for c in categories if c.name == 'Food')
+        restaurants_category = next(c for c in categories if c.name == 'Restaurants')
+        
+        assert food_category.parent is None
+        assert restaurants_category.parent_id == food_category.id
+
+    def test_create_category_hierarchy_in_session_with_existing_parent(self, db_interface: DatabaseInterface):
+        """Test category hierarchy creation when parent already exists."""
+        # Arrange - Create parent category first
+        existing_food = db_interface.db.create_category(name="Food")
+        session = db_interface.db.get_session()
+        
+        # Act - Create sub-category with existing parent
+        result = db_interface._create_category_hierarchy_in_session("Food", "Snacks", session)
+        session.commit()
+        
+        # Assert
+        assert result is True
+        
+        # Verify only one new category was created
+        categories = db_interface.db.get_all_categories()
+        assert len(categories) == 2
+        
+        # Verify the existing parent was used
+        snacks_category = next(c for c in categories if c.name == 'Snacks')
+        assert snacks_category.parent_id == existing_food.id
+
+    # --- Enhanced Error Handling Tests ---
+
+    def test_error_handling_with_constraint_classification(self, db_interface: DatabaseInterface):
+        """Test that error handling classifies constraint errors properly."""
+        # This test verifies that the interface can handle and classify different types of errors
+        # We'll test the error handling methods directly since they're part of the interface
+        
+        # Test constraint error handling
+        integrity_error = IntegrityError("UNIQUE constraint failed", None, None)
+        error_info = db_interface.db.handle_constraint_error(integrity_error)
+        
+        assert error_info["error_category"] == "constraint_violation"
+        assert error_info["constraint_type"] == "unique_violation"
+        assert error_info["is_retryable"] is False
+
+    def test_retryable_error_detection(self, db_interface: DatabaseInterface):
+        """Test retryable error detection in the interface."""
+        # Test operational errors (retryable)
+        operational_error = OperationalError("database is locked", None, None)
+        assert db_interface.db.is_retryable_error(operational_error) is True
+        
+        # Test integrity errors (not retryable)
+        integrity_error = IntegrityError("constraint failed", None, None)
+        assert db_interface.db.is_retryable_error(integrity_error) is False
+
+    def test_save_transactions_with_detailed_error_logging(self, db_interface: DatabaseInterface):
+        """Test that save_transactions_table provides detailed error information."""
+        # Arrange - Create DataFrame with various error types
+        problematic_df = pd.DataFrame({
+            'description': ['Valid', 'Invalid Date', 'Invalid Amount'],
+            'amount': [25.50, 30.00, 'not_a_number'],
+            'transaction_date': ['2024-01-15 10:00:00', 'invalid_date_format', '2024-01-15 12:00:00'],
+            'category': ['Food', 'Food', 'Food'],
+            'sub_category': ['', '', '']
+        })
+        
+        # Act
+        result = db_interface.save_transactions_table(problematic_df)
+        
+        # Assert
+        assert result is False  # Should fail due to errors
+        
+        # Verify no partial saves occurred (atomic rollback)
+        saved_transactions = db_interface.db.get_all_transactions()
+        assert len(saved_transactions) == 0
+
+    def test_empty_dataframe_handling(self, db_interface: DatabaseInterface):
+        """Test handling of empty DataFrames."""
+        # Arrange
+        empty_df = pd.DataFrame(columns=['description', 'amount', 'transaction_date', 'category', 'sub_category'])
+        
+        # Act
+        result = db_interface.save_transactions_table(empty_df)
+        
+        # Assert
+        assert result is True  # Empty DataFrame should be handled gracefully
+        assert len(db_interface.db.get_all_transactions()) == 0
+
+    def test_missing_required_columns_error_handling(self, db_interface: DatabaseInterface):
+        """Test error handling for missing required columns."""
+        # Arrange
+        invalid_df = pd.DataFrame({
+            'description': ['Coffee'],
+            'category': ['Food']
+            # Missing 'amount' and 'transaction_date'
+        })
+        
+        # Act
+        result = db_interface.save_transactions_table(invalid_df)
+        
+        # Assert
+        assert result is False  # Should fail due to missing required columns
+        assert len(db_interface.db.get_all_transactions()) == 0
+
+    # --- Session-Aware Operations Tests ---
+
+    def test_get_categories_table_with_session_isolation(self, db_interface: DatabaseInterface):
+        """Test that get_categories_table works correctly with session isolation."""
+        # Arrange - Create categories
+        food = db_interface.db.create_category(name="Food")
+        groceries = db_interface.db.create_category(name="Groceries", parent_id=food.id)
+        
+        # Act
+        categories_df = db_interface.get_categories_table()
+        
+        # Assert
+        assert len(categories_df) == 2
+        assert 'Food' in categories_df['name'].values
+        assert 'Groceries' in categories_df['name'].values
+        
+        # Verify hierarchy is correctly represented
+        groceries_row = categories_df[categories_df['name'] == 'Groceries'].iloc[0]
+        assert groceries_row['parent_category'] == 'Food'
+
+    def test_get_transactions_table_with_session_isolation(self, db_interface: DatabaseInterface):
+        """Test that get_transactions_table works correctly with session isolation."""
+        # Arrange - Create categories and transactions
+        food = db_interface.db.create_category(name="Food")
+        dining = db_interface.db.create_category(name="Dining", parent_id=food.id)
+        
+        indian_tz = pytz.timezone("Asia/Kolkata")
+        transaction_date = indian_tz.localize(datetime.datetime(2024, 1, 15, 12, 0))
+        
+        db_interface.db.create_transaction(
+            amount=25.50,
+            transaction_date=transaction_date,
+            description="Restaurant lunch",
+            category_id=dining.id
+        )
+        
+        # Act
+        transactions_df = db_interface.get_transactions_table()
+        
+        # Assert
+        assert len(transactions_df) == 1
+        transaction_row = transactions_df.iloc[0]
+        assert transaction_row['description'] == "Restaurant lunch"
+        assert transaction_row['category'] == 'Food'
+        assert transaction_row['sub_category'] == 'Dining'
+        assert transaction_row['amount'] == 25.50
+
+    # --- Batch Operations with Atomic Transactions Tests ---
+
+    def test_large_batch_atomic_operation(self, db_interface: DatabaseInterface):
+        """Test atomic operation with larger batch of transactions."""
+        # Arrange - Create a larger dataset
+        num_transactions = 50
+        transactions_data = []
+        
+        for i in range(num_transactions):
+            transactions_data.append({
+                'description': f'Transaction {i+1}',
+                'amount': 10.0 + i,
+                'transaction_date': f'2024-01-{(i % 28) + 1:02d} 10:00:00',
+                'category': 'Food' if i % 2 == 0 else 'Transport',
+                'sub_category': 'Groceries' if i % 4 == 0 else ''
+            })
+        
+        batch_df = pd.DataFrame(transactions_data)
+        
+        # Act
+        result = db_interface.save_transactions_table(batch_df)
+        
+        # Assert
+        assert result is True
+        
+        # Verify all transactions were saved atomically
+        saved_transactions = db_interface.db.get_all_transactions()
+        assert len(saved_transactions) == num_transactions
+        
+        # Verify categories were created
+        categories = db_interface.db.get_all_categories()
+        category_names = [c.name for c in categories]
+        assert 'Food' in category_names
+        assert 'Transport' in category_names
+        assert 'Groceries' in category_names
+
+    def test_mixed_category_hierarchy_atomic_creation(self, db_interface: DatabaseInterface):
+        """Test atomic creation of complex category hierarchies."""
+        # Arrange
+        transactions_df = pd.DataFrame({
+            'description': ['Supermarket', 'Fine dining', 'Bus pass', 'Movie ticket', 'Coffee'],
+            'amount': [67.89, 125.50, 45.00, 15.00, 4.50],
+            'transaction_date': [
+                '2024-01-15 10:00:00', '2024-01-15 20:00:00', '2024-01-16 08:00:00',
+                '2024-01-16 19:00:00', '2024-01-17 09:00:00'
+            ],
+            'category': ['Food', 'Food', 'Transport', 'Entertainment', 'Food'],
+            'sub_category': ['Groceries', 'Dining', 'Public Transport', '', 'Coffee Shops']
+        })
+        
+        # Act
+        result = db_interface.save_transactions_table(transactions_df)
+        
+        # Assert
+        assert result is True
+        
+        # Verify complex hierarchy was created atomically
+        categories = db_interface.db.get_all_categories()
+        assert len(categories) == 6  # Food, Groceries, Dining, Coffee Shops, Transport, Public Transport, Entertainment
+        
+        # Verify hierarchy relationships
+        food_category = next(c for c in categories if c.name == 'Food' and c.parent is None)
+        transport_category = next(c for c in categories if c.name == 'Transport' and c.parent is None)
+        entertainment_category = next(c for c in categories if c.name == 'Entertainment' and c.parent is None)
+        
+        groceries_category = next(c for c in categories if c.name == 'Groceries')
+        dining_category = next(c for c in categories if c.name == 'Dining')
+        coffee_shops_category = next(c for c in categories if c.name == 'Coffee Shops')
+        public_transport_category = next(c for c in categories if c.name == 'Public Transport')
+        
+        assert groceries_category.parent_id == food_category.id
+        assert dining_category.parent_id == food_category.id
+        assert coffee_shops_category.parent_id == food_category.id
+        assert public_transport_category.parent_id == transport_category.id
+        assert entertainment_category.parent is None
