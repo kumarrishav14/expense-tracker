@@ -23,8 +23,40 @@ class DatabaseInterface:
     """
     Simplified interface for converting between pandas DataFrames and database tables.
     
-    Other components work with denormalized DataFrames (no foreign keys), while this
-    interface handles all SQL relationship complexity internally.
+    This interface provides a clean abstraction layer where other components work with
+    denormalized pandas DataFrames (no foreign keys), while all SQL relationship 
+    complexity is handled internally using atomic transactions.
+    
+    Key Features:
+    - Denormalized DataFrames with human-readable category/sub_category columns
+    - Atomic transaction support for reliable batch operations
+    - Automatic category hierarchy creation
+    - Comprehensive error handling with rollback support
+    - Clean separation from SQL implementation details
+    
+    Data Structure:
+    - Categories: [name, parent_category] - for UX components
+    - Transactions: [description, amount, transaction_date, category, sub_category]
+    
+    Category Hierarchy Logic:
+    - If sub_category exists: category=parent_name, sub_category=child_name
+    - If no sub_category: category=category_name, sub_category=blank
+    
+    Usage Examples:
+        # Initialize interface
+        db_interface = DatabaseInterface()
+        
+        # Export data for analysis
+        categories_df = db_interface.get_categories_table()
+        transactions_df = db_interface.get_transactions_table()
+        
+        # Import data with automatic category creation
+        success = db_interface.save_transactions_table(cleaned_df)
+        if not success:
+            print("Import failed - check logs for details")
+        
+        # Create category hierarchies for UX
+        success = db_interface.create_category_hierarchy("Food", "Restaurants")
     """
     
     def __init__(self, db_url: str = "sqlite:///expenses.db"):
@@ -116,7 +148,7 @@ class DatabaseInterface:
     
     def save_transactions_table(self, df: pd.DataFrame) -> bool:
         """
-        Save transactions from denormalized DataFrame to database.
+        Save transactions from denormalized DataFrame to database using atomic transactions.
         
         Args:
             df (pd.DataFrame): DataFrame with columns [description, amount, transaction_date, 
@@ -129,7 +161,7 @@ class DatabaseInterface:
             print("DEBUG: Empty DataFrame provided, nothing to save")
             return True
         
-        print(f"DEBUG: Starting to save {len(df)} transactions")
+        print(f"DEBUG: Starting atomic save of {len(df)} transactions")
         
         # Validate required columns
         required_cols = ['amount', 'transaction_date']
@@ -138,70 +170,104 @@ class DatabaseInterface:
             print(f"ERROR: Missing required columns: {missing_cols}")
             return False
         
-        saved_count = 0
-        failed_count = 0
-        
-        for index, row in df.iterrows():
-            try:
-                # Convert transaction_date to datetime if needed
-                transaction_date = row['transaction_date']
-                if isinstance(transaction_date, str):
-                    transaction_date = pd.to_datetime(transaction_date).to_pydatetime()
-                elif isinstance(transaction_date, pd.Timestamp):
-                    transaction_date = transaction_date.to_pydatetime()
+        try:
+            # Use transaction scope for atomic operation
+            with self.db.transaction_scope() as session:
+                print("DEBUG: Started transaction scope for atomic operation")
                 
-                # Ensure timezone awareness
-                if transaction_date.tzinfo is None:
-                    transaction_date = indian_timezone.localize(transaction_date)
+                # Prepare transaction data for batch operation
+                transactions_data = []
+                categories_to_create = []
                 
-                # Resolve category_id from category and sub_category names
-                category_id = self._resolve_category_id(
-                    row.get('category', ''), 
-                    row.get('sub_category', '')
-                )
-                
-                if category_id is None and (row.get('category', '').strip() or row.get('sub_category', '').strip()):
-                    print(f"DEBUG: Category not found for row {index}, creating hierarchy: '{row.get('category', '')}' -> '{row.get('sub_category', '')}'")
-                    # Auto-create category hierarchy if names provided but not found
-                    hierarchy_created = self.create_category_hierarchy(
-                        row.get('category', ''), 
-                        row.get('sub_category', '')
-                    )
-                    if hierarchy_created:
-                        # Re-resolve category_id after creation
+                for index, row in df.iterrows():
+                    try:
+                        # Convert transaction_date to datetime if needed
+                        transaction_date = row['transaction_date']
+                        if isinstance(transaction_date, str):
+                            transaction_date = pd.to_datetime(transaction_date).to_pydatetime()
+                        elif isinstance(transaction_date, pd.Timestamp):
+                            transaction_date = transaction_date.to_pydatetime()
+                        
+                        # Ensure timezone awareness
+                        if transaction_date.tzinfo is None:
+                            transaction_date = indian_timezone.localize(transaction_date)
+                        
+                        # Resolve category_id from category and sub_category names
                         category_id = self._resolve_category_id(
                             row.get('category', ''), 
-                            row.get('sub_category', '')
+                            row.get('sub_category', ''),
+                            session=session
                         )
+                        
+                        # Auto-create category hierarchy if needed
+                        if category_id is None and (row.get('category', '').strip() or row.get('sub_category', '').strip()):
+                            print(f"DEBUG: Category not found for row {index}, will create hierarchy: '{row.get('category', '')}' -> '{row.get('sub_category', '')}'")
+                            
+                            # Create categories within the same transaction
+                            hierarchy_created = self._create_category_hierarchy_in_session(
+                                row.get('category', ''), 
+                                row.get('sub_category', ''),
+                                session
+                            )
+                            
+                            if hierarchy_created:
+                                # Re-resolve category_id after creation
+                                category_id = self._resolve_category_id(
+                                    row.get('category', ''), 
+                                    row.get('sub_category', ''),
+                                    session=session
+                                )
+                        
+                        # Prepare transaction data
+                        transaction_data = {
+                            'amount': float(row['amount']),
+                            'transaction_date': transaction_date,
+                            'description': row.get('description') or None,
+                            'category_id': category_id
+                        }
+                        transactions_data.append(transaction_data)
+                        
+                        print(f"DEBUG: Prepared transaction {index}: {row.get('description', 'No description')} - ${row['amount']}")
+                        
+                    except Exception as e:
+                        print(f"ERROR: Failed to prepare transaction at row {index}: {str(e)}")
+                        print(f"ERROR: Row data: {row.to_dict()}")
+                        raise  # Re-raise to trigger rollback
                 
-                # Create transaction
-                transaction = self.db.create_transaction(
-                    amount=float(row['amount']),
-                    transaction_date=transaction_date,
-                    description=row.get('description') or None,
-                    category_id=category_id
+                # Create all transactions in batch within the transaction
+                print(f"DEBUG: Creating batch of {len(transactions_data)} transactions")
+                created_transactions = self.db.create_transactions_batch(
+                    transactions_data, 
+                    session=session
                 )
                 
-                saved_count += 1
-                print(f"DEBUG: Saved transaction {index}: {row.get('description', 'No description')} - ${row['amount']}")
+                print(f"DEBUG: Successfully created {len(created_transactions)} transactions in atomic operation")
+                # Transaction will be committed automatically by transaction_scope
                 
-            except Exception as e:
-                failed_count += 1
-                print(f"ERROR: Failed to save transaction at row {index}: {str(e)}")
-                print(f"ERROR: Row data: {row.to_dict()}")
-        
-        print(f"DEBUG: Transaction save complete - Saved: {saved_count}, Failed: {failed_count}")
-        
-        # Return True only if all transactions were saved successfully
-        return failed_count == 0
+            print(f"DEBUG: Atomic transaction save complete - All {len(df)} transactions saved successfully")
+            return True
+            
+        except Exception as e:
+            error_info = self.db.handle_constraint_error(e)
+            print(f"ERROR: Atomic transaction failed and rolled back: {error_info['error_message']}")
+            print(f"ERROR: Error category: {error_info.get('error_category', 'unknown')}")
+            
+            # Check if error is retryable
+            if self.db.is_retryable_error(e):
+                print("DEBUG: Error is retryable - caller may want to retry operation")
+            else:
+                print("DEBUG: Error is not retryable - data validation or constraint issue")
+            
+            return False
     
-    def _resolve_category_id(self, category_name: str, sub_category_name: str) -> Optional[int]:
+    def _resolve_category_id(self, category_name: str, sub_category_name: str, session: Optional[Session] = None) -> Optional[int]:
         """
         Resolve category_id from category and sub_category names.
         
         Args:
             category_name (str): Main category name.
             sub_category_name (str): Sub-category name (can be empty).
+            session (Optional[Session]): Database session to use.
             
         Returns:
             Optional[int]: Category ID or None if not found.
@@ -209,7 +275,7 @@ class DatabaseInterface:
         if not category_name.strip():
             return None
         
-        categories = self.db.get_all_categories()
+        categories = self.db.get_all_categories(session=session)
         
         if sub_category_name.strip():
             # Look for sub_category with matching parent
@@ -224,6 +290,70 @@ class DatabaseInterface:
                     return cat.id
         
         return None
+    
+    def _create_category_hierarchy_in_session(self, category_name: str, sub_category_name: str, session: Session) -> bool:
+        """
+        Create category hierarchy within an existing session (for atomic operations).
+        
+        Args:
+            category_name (str): Main category name.
+            sub_category_name (str): Sub-category name (optional).
+            session (Session): Database session to use.
+            
+        Returns:
+            bool: True if hierarchy created/exists successfully, False otherwise.
+        """
+        try:
+            if not category_name.strip():
+                print("ERROR: Category name cannot be empty")
+                return False
+            
+            print(f"DEBUG: Creating category hierarchy in session - Category: '{category_name.strip()}', Sub-category: '{sub_category_name.strip()}'")
+            
+            # Find or create parent category
+            parent_category = None
+            categories = self.db.get_all_categories(session=session)
+            
+            for cat in categories:
+                if cat.name == category_name.strip() and not cat.parent:
+                    parent_category = cat
+                    print(f"DEBUG: Found existing parent category: '{cat.name}' (ID: {cat.id})")
+                    break
+            
+            if not parent_category:
+                parent_category = self.db.create_category(
+                    name=category_name.strip(), 
+                    session=session
+                )
+                print(f"DEBUG: Created new parent category: '{parent_category.name}' (ID: {parent_category.id})")
+            
+            # Find or create sub-category if provided
+            sub_category = None
+            if sub_category_name.strip():
+                # Refresh categories list after potential parent creation
+                categories = self.db.get_all_categories(session=session)
+                
+                for cat in categories:
+                    if (cat.name == sub_category_name.strip() and 
+                        cat.parent and cat.parent.id == parent_category.id):
+                        sub_category = cat
+                        print(f"DEBUG: Found existing sub-category: '{cat.name}' (ID: {cat.id})")
+                        break
+                
+                if not sub_category:
+                    sub_category = self.db.create_category(
+                        name=sub_category_name.strip(), 
+                        parent_id=parent_category.id,
+                        session=session
+                    )
+                    print(f"DEBUG: Created new sub-category: '{sub_category.name}' (ID: {sub_category.id}) under parent '{parent_category.name}'")
+            
+            print(f"DEBUG: Category hierarchy creation in session successful")
+            return True
+            
+        except Exception as e:
+            print(f"ERROR: Failed to create category hierarchy in session - Category: '{category_name}', Sub-category: '{sub_category_name}': {str(e)}")
+            return False
     
     def create_category_hierarchy(self, category_name: str, sub_category_name: str = "") -> bool:
         """
