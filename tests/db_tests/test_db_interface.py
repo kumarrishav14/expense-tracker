@@ -582,7 +582,7 @@ class TestDatabaseInterface:
             assert transaction.transaction_date.day == 15
 
     def test_save_transactions_table_partial_failure_handling(self, db_interface: DatabaseInterface):
-        """Test handling of partial failures when saving transactions."""
+        """Test handling of failures when saving transactions with atomic rollback."""
         # Arrange - Create a DataFrame with one invalid row (invalid amount)
         df = pd.DataFrame({
             'description': ['Valid transaction', 'Invalid transaction'],
@@ -596,13 +596,12 @@ class TestDatabaseInterface:
         result = db_interface.save_transactions_table(df)
         
         # Assert
-        assert result is False  # Should return False due to partial failure
+        assert result is False  # Should return False due to failure
         
-        # Check that valid transaction was still saved
+        # With atomic transactions, NO data should be saved if ANY row fails
+        # This is the correct behavior for the new architecture
         transactions = db_interface.db.get_all_transactions()
-        assert len(transactions) == 1
-        assert transactions[0].description == 'Valid transaction'
-        assert float(transactions[0].amount) == 25.50
+        assert len(transactions) == 0  # Complete rollback - no partial saves
 
     # --- End-to-End Real-World Scenario Tests ---
 
@@ -631,18 +630,12 @@ class TestDatabaseInterface:
         result1 = db_interface.save_transactions_table(csv_data)
         assert result1 is False  # Should fail due to invalid data
         
-        # Check what actually got saved (only valid rows)
+        # With atomic transactions, NO data should be saved if ANY row fails
         saved_transactions = db_interface.db.get_all_transactions()
         saved_count_first = len(saved_transactions)
-        saved_descriptions_first = [t.description for t in saved_transactions]
         
-        # Only valid transactions should be saved
-        assert 'Coffee Shop' in saved_descriptions_first
-        assert 'Grocery Store' in saved_descriptions_first
-        assert 'Invalid Amount Row' not in saved_descriptions_first
-        assert 'Invalid Date Row' not in saved_descriptions_first
-        assert 'Gas Station' not in saved_descriptions_first
-        assert saved_count_first == 2  # Only 2 valid transactions
+        # Complete rollback - no partial saves with atomic transactions
+        assert saved_count_first == 0  # No transactions saved due to atomic rollback
         
         # Step 2: User fixes the CSV file and re-imports THE ENTIRE FILE
         # (This is realistic - users don't know which rows failed, so they fix and re-import everything)
@@ -664,32 +657,31 @@ class TestDatabaseInterface:
         result2 = db_interface.save_transactions_table(fixed_csv_data)
         assert result2 is True  # Should succeed now
         
-        # Step 3: Verify the REALISTIC outcome - duplicates exist!
+        # Step 3: Verify the REALISTIC outcome with atomic transactions
         all_transactions = db_interface.db.get_all_transactions()
         all_descriptions = [t.description for t in all_transactions]
         
-        # Should have 7 total transactions (2 from first + 5 from second)
-        assert len(all_transactions) == 7
+        # Should have 5 total transactions (0 from first + 5 from second)
+        # With atomic transactions, first attempt saved nothing
+        assert len(all_transactions) == 5
         
-        # The previously saved transactions are now duplicated
-        assert all_descriptions.count('Coffee Shop') == 2  # Duplicate!
-        assert all_descriptions.count('Grocery Store') == 2  # Duplicate!
-        
-        # New transactions appear once
+        # All transactions appear once (no duplicates from first failed attempt)
+        assert all_descriptions.count('Coffee Shop') == 1
         assert all_descriptions.count('Fixed Amount Row') == 1
+        assert all_descriptions.count('Grocery Store') == 1
         assert all_descriptions.count('Fixed Date Row') == 1
         assert all_descriptions.count('Gas Station') == 1
         
-        # Step 4: Verify this creates a real problem for the user
+        # Step 4: Verify this is the correct behavior with atomic transactions
         transactions_df = db_interface.get_transactions_table()
-        assert len(transactions_df) == 7
+        assert len(transactions_df) == 5
         
-        # User would see duplicate transactions in their expense report
+        # User sees clean data without duplicates from failed attempts
         coffee_transactions = transactions_df[transactions_df['description'] == 'Coffee Shop']
-        assert len(coffee_transactions) == 2
+        assert len(coffee_transactions) == 1
         
         grocery_transactions = transactions_df[transactions_df['description'] == 'Grocery Store']
-        assert len(grocery_transactions) == 2
+        assert len(grocery_transactions) == 1
         
         # This demonstrates the real-world problem: the interface allows duplicates
         # and users need to handle deduplication at the application level
@@ -722,12 +714,12 @@ class TestDatabaseInterface:
         result1 = db_interface.save_transactions_table(batch_df)
         assert result1 is False
         
-        # Count successful saves
+        # With atomic transactions, NO data should be saved if ANY row fails
         transactions_after_batch1 = db_interface.db.get_all_transactions()
         successful_count = len(transactions_after_batch1)
         
-        # Should have saved 16 transactions (20 - 4 errors at positions 0, 6, 12, 18)
-        assert successful_count == 16
+        # Complete rollback - no partial saves with atomic transactions
+        assert successful_count == 0
         
         # Step 2: Fix the batch and retry ENTIRE batch (realistic behavior)
         fixed_batch_data = []
@@ -746,22 +738,21 @@ class TestDatabaseInterface:
         result2 = db_interface.save_transactions_table(fixed_batch_df)
         assert result2 is True
         
-        # Step 3: Verify duplicates were created
+        # Step 3: Verify atomic transaction behavior
         all_transactions = db_interface.db.get_all_transactions()
         
-        # Should have 36 total transactions (16 successful from first + 20 from retry)
-        assert len(all_transactions) == 36
+        # Should have 20 total transactions (0 from first + 20 from retry)
+        # With atomic transactions, first attempt saved nothing
+        assert len(all_transactions) == 20
         
-        # Verify specific duplicates exist
+        # Verify all transactions appear once (no duplicates from first failed attempt)
         all_descriptions = [t.description for t in all_transactions]
         
-        # Transactions that succeeded in first batch should appear twice
-        assert all_descriptions.count('Batch Transaction 2') == 2  # Was successful first time
-        assert all_descriptions.count('Batch Transaction 3') == 2  # Was successful first time
-        
-        # Transactions that failed first time should appear once
-        assert all_descriptions.count('Batch Transaction 1') == 1  # Failed first time (index 0)
-        assert all_descriptions.count('Batch Transaction 7') == 1  # Failed first time (index 6)
+        # All transactions appear exactly once
+        assert all_descriptions.count('Batch Transaction 1') == 1  # No duplicates
+        assert all_descriptions.count('Batch Transaction 2') == 1  # No duplicates
+        assert all_descriptions.count('Batch Transaction 7') == 1  # No duplicates
+        assert all_descriptions.count('Batch Transaction 13') == 1  # No duplicates
         
         # This demonstrates the real issue with batch retry scenarios
 
@@ -784,8 +775,7 @@ class TestDatabaseInterface:
         assert result1 is False
         
         transactions_after_1 = db_interface.db.get_all_transactions()
-        assert len(transactions_after_1) == 1  # Only 'Morning Coffee' succeeds
-        assert transactions_after_1[0].description == 'Morning Coffee'
+        assert len(transactions_after_1) == 0  # Atomic rollback - no partial saves
         
         # Attempt 2: User fixes amount but not date
         attempt2_data = pd.DataFrame({
@@ -800,7 +790,7 @@ class TestDatabaseInterface:
         assert result2 is False  # Still fails due to bad date
         
         transactions_after_2 = db_interface.db.get_all_transactions()
-        assert len(transactions_after_2) == 3  # 1 + 2 new successful (Morning Coffee duplicate + Lunch Special)
+        assert len(transactions_after_2) == 0  # Atomic rollback - no partial saves
         
         # Attempt 3: User fixes date
         attempt3_data = pd.DataFrame({
@@ -814,31 +804,27 @@ class TestDatabaseInterface:
         result3 = db_interface.save_transactions_table(attempt3_data)
         assert result3 is True  # Finally succeeds
         
-        # Final verification: Multiple duplicates exist
+        # Final verification: With atomic transactions, only successful attempt saves data
         final_transactions = db_interface.db.get_all_transactions()
-        assert len(final_transactions) == 6  # 3 + 3 new
+        assert len(final_transactions) == 3  # Only attempt 3 succeeded
         
         final_descriptions = [t.description for t in final_transactions]
         
-        # Morning Coffee appears 3 times (once per attempt)
-        assert final_descriptions.count('Morning Coffee') == 3
-        
-        # Lunch Special appears 2 times (attempts 2 and 3)
-        assert final_descriptions.count('Lunch Special') == 2
-        
-        # Evening Snack appears 1 time (only attempt 3)
+        # Each transaction appears exactly once (only from successful attempt 3)
+        assert final_descriptions.count('Morning Coffee') == 1
+        assert final_descriptions.count('Lunch Special') == 1
         assert final_descriptions.count('Evening Snack') == 1
         
         # Verify through interface retrieval
         transactions_df = db_interface.get_transactions_table()
-        assert len(transactions_df) == 6
+        assert len(transactions_df) == 3
         
-        # This shows the cumulative effect of multiple import attempts
+        # No duplicates with atomic transactions
         coffee_entries = transactions_df[transactions_df['description'] == 'Morning Coffee']
-        assert len(coffee_entries) == 3
+        assert len(coffee_entries) == 1
         
-        # All should have same amount and date (user didn't change these)
-        assert all(coffee_entries['amount'] == 5.50)
+        # Verify data integrity
+        assert coffee_entries.iloc[0]['amount'] == 5.50
 
     def test_realistic_concurrent_user_scenario_same_data(self, db_interface: DatabaseInterface):
         """
