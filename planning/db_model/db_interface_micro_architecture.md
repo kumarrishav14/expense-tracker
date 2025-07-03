@@ -41,14 +41,17 @@ The `db_interface` component serves as the **Simple Data Access Layer** in the p
 | **Data Persistence** | Save operations with transaction management | Data Pipeline, UI |
 | **Data Translation** | DataFrame ↔ ORM conversion | All UI Components |
 | **Basic Filtering** | Date range, category, amount filters | All UI Components |
-| **Error Handling** | Database error translation | All Components |
+| **Database Error Handling** | Database constraint and connection errors | All Components |
 | **Category Management** | Hierarchy auto-creation | Statement Input, Settings |
 
 ## **What db_interface Does NOT Handle**
 
 | Responsibility | Owner Component | Rationale |
 |----------------|-----------------|-----------|
-| **Business Logic** | Individual UI Components | Each component owns its processing |
+| **Business Logic Validation** | Data Processor | Domain-specific rules |
+| **Data Quality Validation** | Data Processor | Completeness, accuracy checks |
+| **Format Validation** | Data Processor | Date formats, number formats |
+| **Duplicate Detection** | Data Processor | Business logic responsibility |
 | **Data Analysis** | Dashboard/Analysis Processors | Component-specific calculations |
 | **AI Insights** | AI Chatbot Component | Domain-specific processing |
 | **Complex Aggregations** | UI Component Processors | Better performance and modularity |
@@ -114,6 +117,9 @@ class DatabaseInterface:
     def save_transactions_table(self, df: pd.DataFrame) -> OperationResult
     def save_categories_table(self, df: pd.DataFrame) -> OperationResult
     
+    # Batch operations with detailed error reporting
+    def save_transactions_batch(self, df: pd.DataFrame) -> BatchOperationResult
+    
     # Category Management
     def create_category_hierarchy(self, category: str, sub_category: str) -> bool
     def bulk_categorize_transactions(self, predictions_df: pd.DataFrame) -> OperationResult
@@ -169,10 +175,14 @@ Error Handling Matrix:
 │   ├─ Response: Retry with exponential backoff
 │   ├─ Fallback: Use cached DataFrames
 │   └─ User Message: "Connection issue, showing cached data"
-├─ DataValidationError:
-│   ├─ Response: Return detailed validation errors
-│   ├─ Fallback: None (user must fix data)
-│   └─ User Message: Specific field-level errors
+├─ DatabaseConstraintError:
+│   ├─ Foreign Key Violations: Category ID doesn't exist
+│   ├─ Unique Constraint Violations: Duplicate primary keys
+│   ├─ Check Constraint Violations: Invalid data ranges
+│   ├─ Not Null Violations: Required database fields missing
+│   ├─ Response: Return detailed constraint error (no retry)
+│   ├─ Fallback: None (data must be fixed by Data Processor)
+│   └─ User Message: Specific constraint violation details
 ├─ TransactionError:
 │   ├─ Response: Full rollback, preserve original state
 │   ├─ Fallback: Restore from cache
@@ -183,27 +193,36 @@ Error Handling Matrix:
     └─ User Message: "Refreshing data..."
 ```
 
-### **Operation Result Structure**
+### **Simplified Operation Result Structure**
 
 ```python
 @dataclass
 class OperationResult:
     success: bool
-    operation: str  # "save_transactions", "update_categories", etc.
-    affected_rows: int
-    error_details: List[ErrorDetail] = None
-    warnings: List[str] = None
-    execution_time: float = None
-    cache_invalidated: List[str] = None
+    operation: str  # "save_transactions", "save_categories"
+    affected_rows: int = 0
+    error_message: Optional[str] = None
+    error_type: Optional[str] = None  # "connection", "constraint", "transaction"
     
+# For batch operations with detailed errors
 @dataclass
-class ErrorDetail:
-    error_type: str
-    error_code: str
-    message: str
-    row_index: Optional[int] = None
-    field_name: Optional[str] = None
-    suggested_fix: Optional[str] = None
+class BatchOperationResult(OperationResult):
+    failed_rows: List[int] = None  # Row indices that failed
+    constraint_violations: List[str] = None  # Specific constraint details
+```
+
+### **Retry Strategy by Error Type**
+
+```python
+Retry Decision Matrix:
+├─ Retryable Errors (Auto-retry with backoff):
+│   ├─ DatabaseConnectionError: Connection timeout, database unavailable
+│   ├─ TransactionError: Deadlock, temporary lock conflicts
+│   └─ SessionError: Session management issues
+├─ Non-Retryable Errors (Return immediately):
+│   ├─ DatabaseConstraintError: Foreign key, unique, check constraints
+│   ├─ DataStructureError: Missing columns, invalid DataFrame
+│   └─ PermissionError: Database access denied
 ```
 
 ## **Transaction Management**
@@ -213,17 +232,19 @@ class ErrorDetail:
 ```python
 Transaction Scope Implementation:
 ├─ Begin Transaction Context
-├─ Validate All Input Data
+├─ Check Basic DataFrame Structure (columns present)
 ├─ Execute All Database Operations
-├─ Update Internal Caches
+├─ Handle Database Constraint Violations
 ├─ Commit Transaction
 └─ Notify Dependent Components
 
 Rollback Scenarios:
-├─ Any validation failure → Full rollback
 ├─ Database constraint violation → Full rollback
-├─ Cache update failure → Database rollback + cache invalidation
+├─ Connection failure → Full rollback
+├─ Transaction conflict → Full rollback
 └─ Component notification failure → Log warning, continue
+
+Note: Data validation is handled by Data Processor before reaching db_interface
 ```
 
 ### **Batch Processing Strategy**
@@ -231,14 +252,23 @@ Rollback Scenarios:
 ```python
 Batch Operation Handling:
 ├─ Small Batches (< 100 rows):
-│   └─ Single transaction, immediate processing
+│   ├─ Single transaction, all-or-nothing
+│   ├─ Return simple OperationResult
+│   └─ On constraint error: rollback, return detailed error
 ├─ Medium Batches (100-1000 rows):
-│   ├─ Single transaction with progress tracking
-│   └─ Chunked cache updates
+│   ├─ Single transaction with detailed error tracking
+│   ├─ Return BatchOperationResult with failed row indices
+│   └─ On constraint error: rollback, return specific violations
 └─ Large Batches (> 1000 rows):
     ├─ Chunked transactions (500 rows each)
-    ├─ Progress callbacks to UI
-    └─ Incremental cache updates
+    ├─ Continue processing remaining chunks on partial failure
+    └─ Return BatchOperationResult with comprehensive error details
+
+Constraint Error Handling:
+├─ No Retry: Constraint violations require data fixes
+├─ Detailed Reporting: Specific constraint and row information
+├─ Rollback Strategy: Full rollback for single transaction
+└─ User Action Required: Fix data in Data Processor and retry
 ```
 
 ## **Component Integration Patterns**
@@ -303,59 +333,31 @@ if not result.success:
         st.error(f"Row {error.row_index}: {error.message}")
 ```
 
-## **Performance Optimization**
+## **Performance Considerations (Personal Use)**
 
-### **Query Optimization Strategy**
+### **Simple Performance Guidelines**
 
 ```python
-Query Patterns:
-├─ Lazy Loading: Load DataFrames on-demand
-├─ Eager Loading: Pre-load related data for analysis
-├─ Pagination: Large datasets split into chunks
-├─ Indexing: Database indexes on frequently queried columns
-└─ Aggregation: Pre-computed summaries for dashboard
+Basic Performance Approach:
+├─ Load all data by default (personal datasets are small)
+├─ Simple caching in Streamlit session state
+├─ Basic database indexes on primary keys
+└─ No complex optimization needed for personal use
+
+Note: Advanced performance optimization moved to future phases
 ```
 
-### **Memory Management**
+## **Simple Logging (Personal Use)**
+
+### **Basic Logging Strategy**
 
 ```python
-Memory Optimization:
-├─ DataFrame Chunking: Process large datasets in chunks
-├─ Selective Loading: Load only required columns
-├─ Cache Size Limits: Maximum cache size per DataFrame type
-├─ Garbage Collection: Automatic cleanup of unused DataFrames
-└─ Compression: Store cached DataFrames in compressed format
-```
+Essential Logging Only:
+├─ ERROR: Failed operations, database errors
+├─ WARNING: Retry attempts, constraint violations
+└─ INFO: Successful batch operations
 
-## **Monitoring & Observability**
-
-### **Performance Metrics**
-
-```python
-Tracked Metrics:
-├─ Operation Latency:
-│   ├─ DataFrame generation time
-│   ├─ Database query execution time
-│   └─ Cache hit/miss ratios
-├─ Data Volume:
-│   ├─ DataFrame sizes
-│   ├─ Cache memory usage
-│   └─ Database growth rate
-└─ Error Rates:
-    ├─ Failed operations by type
-    ├─ Retry success rates
-    └─ Cache invalidation frequency
-```
-
-### **Logging Strategy**
-
-```python
-Log Levels:
-├─ DEBUG: DataFrame operations, cache hits/misses
-├─ INFO: Successful operations, performance metrics
-├─ WARNING: Retry attempts, cache invalidations
-├─ ERROR: Failed operations, data validation errors
-└─ CRITICAL: Database connection failures, data corruption
+Note: Detailed monitoring and metrics moved to future phases
 ```
 
 ## **Testing Strategy**
@@ -374,7 +376,7 @@ Test Categories:
 │   └─ Memory usage limits
 ├─ Error Handling Tests:
 │   ├─ Database connection failures
-│   ├─ Data validation errors
+│   ├─ Database constraint errors
 │   └─ Transaction rollback scenarios
 └─ Performance Tests:
     ├─ Large dataset handling
@@ -400,45 +402,34 @@ Integration Scenarios:
     └─ Error recovery scenarios
 ```
 
-## **Future Extensibility**
+## **Future Enhancements (Personal Project)**
 
-### **Planned Enhancements**
+### **Phase 2 - Performance & Reliability**
 
 ```python
-Phase 2 Features:
-├─ Real-time Data Streaming:
-│   ├─ WebSocket connections for live updates
-│   ├─ Event-driven DataFrame updates
-│   └─ Multi-user data synchronization
-├─ Advanced Caching:
-│   ├─ Distributed cache for multi-user
-│   ├─ Persistent cache across sessions
-│   └─ Smart prefetching based on usage patterns
-├─ Data Versioning:
-│   ├─ DataFrame change tracking
-│   ├─ Rollback to previous data states
-│   └─ Audit trail for all modifications
-└─ Performance Optimization:
-    ├─ Parallel DataFrame processing
-    ├─ Asynchronous database operations
-    └─ Intelligent query optimization
+When Dataset Grows Large:
+├─ Query optimization for large datasets
+├─ DataFrame chunking for memory efficiency
+├─ Advanced caching strategies
+└─ Performance monitoring
+
+When Features Expand:
+├─ Additional file format support
+├─ Data backup and restore
+├─ Advanced error recovery
+└─ Audit trail for modifications
 ```
 
-### **Extension Points**
+### **Phase 3 - Advanced Features (Optional)**
 
 ```python
-Plugin Architecture:
-├─ Custom DataFrame Transformers:
-│   └─ User-defined data processing pipelines
-├─ External Data Sources:
-│   ├─ API integrations (bank APIs, financial services)
-│   └─ Real-time data feeds
-├─ Custom Analysis Engines:
-│   ├─ User-defined analysis functions
-│   └─ Third-party analytics libraries
-└─ Data Export/Import Formats:
-    ├─ Additional file format support
-    └─ Cloud storage integrations
+If Needed Later:
+├─ Bank API integrations
+├─ Cloud storage backup
+├─ Data export/import improvements
+└─ Advanced analytics features
+
+Note: Multi-user support removed - this is a personal app
 ```
 
 ---
