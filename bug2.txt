@@ -1,0 +1,135 @@
+# BUG REPORT #2: Critical Database Session Isolation Issue
+
+## Bug ID: BUG-002
+## Severity: CRITICAL
+## Priority: HIGH
+## Status: OPEN
+## Reporter: Tester
+## Date: 2024-01-XX
+
+---
+
+## Summary
+The `transaction_scope()` method in the Database class creates a separate database connection instead of using the shared application database, causing atomic transactions to be isolated from the main application data.
+
+## Description
+When using the enhanced atomic transaction features in `DatabaseInterface`, the `transaction_scope()` context manager creates its own database engine and session factory. This results in transactions being committed to a completely separate database instance, making them invisible to the rest of the application.
+
+## Steps to Reproduce
+1. Create a `DatabaseInterface` instance
+2. Use `save_transactions_table()` with valid data (this uses `transaction_scope()` internally)
+3. Attempt to retrieve the saved data using `get_transactions_table()` or direct database queries
+4. Observe that the data is not visible despite successful save operation
+
+## Expected Behavior
+- All database operations should use the same database connection
+- Atomic transactions committed via `transaction_scope()` should be immediately visible to other parts of the application
+- Test database and production database should behave consistently
+
+## Actual Behavior
+- `transaction_scope()` creates a separate database connection
+- Data saved through atomic transactions is isolated and not visible to the main application
+- Debug logs show successful saves, but data queries return empty results
+
+## Evidence
+### Test Failure Output:
+```
+DEBUG: Atomic transaction save complete. Saved 2 transactions and 1 categories
+# Immediately followed by:
+transactions_df = db_interface.get_transactions_table()
+assert len(transactions_df) == 2  # FAILS - transactions_df is empty
+```
+
+### Code Analysis:
+- `DatabaseInterface.save_transactions_table()` uses `self.db.transaction_scope()`
+- `Database.transaction_scope()` appears to create its own engine/session factory
+- This creates a separate SQLite database file or connection
+- Main application queries use a different database connection
+
+## Impact Assessment
+### Functional Impact:
+- **Data Loss**: Transactions saved atomically are lost/invisible
+- **Broken Atomicity**: Defeats the purpose of atomic transaction implementation
+- **Application Integrity**: Core functionality of saving and retrieving data is broken
+
+### Business Impact:
+- **Production Risk**: Would cause complete data loss in production
+- **User Experience**: Users would lose all transaction data
+- **Data Consistency**: Application state becomes inconsistent
+
+### Testing Impact:
+- **Test Reliability**: Cannot validate atomic transaction functionality
+- **False Positives**: Tests may pass but functionality is broken
+- **Coverage Gaps**: Enhanced features cannot be properly tested
+
+## Root Cause Analysis
+The issue appears to be in the `Database.transaction_scope()` method implementation:
+1. Method creates its own database engine instead of reusing existing one
+2. Session factory is instantiated separately from main application sessions
+3. No shared connection pool or database instance between transaction scope and regular operations
+
+## Affected Components
+- `core/database/db_manager.py` - `Database.transaction_scope()` method
+- `core/database/db_interface.py` - All methods using atomic transactions
+- `tests/db_tests/test_db_interface.py` - All atomic transaction tests failing
+
+## Affected Features
+- Atomic transaction support
+- Batch operations with rollback
+- Enhanced error handling with transactions
+- Session-aware category resolution
+- All `save_transactions_table()` operations
+
+## Workaround
+Currently no viable workaround exists. The atomic transaction features cannot be used reliably until this issue is resolved.
+
+## Recommended Fix
+### Immediate Actions Required:
+1. **Modify `Database.transaction_scope()`** to use the same database engine as the main application
+2. **Ensure session sharing** between transaction scope and regular database operations
+3. **Implement proper connection pooling** if not already present
+4. **Add integration tests** to verify session consistency
+
+### Technical Implementation:
+```python
+# Current problematic pattern (hypothetical):
+def transaction_scope(self):
+    # Creates separate engine - WRONG
+    engine = create_engine(self.db_url)
+    session = sessionmaker(bind=engine)()
+    
+# Required fix pattern:
+def transaction_scope(self):
+    # Use existing shared engine - CORRECT
+    session = self.Session()  # Use existing session factory
+```
+
+### Validation Steps:
+1. Run existing atomic transaction tests - they should pass without modification
+2. Verify data persistence across different database operation methods
+3. Test in both development and production-like environments
+4. Ensure no performance regression from shared connections
+
+## Test Cases to Validate Fix
+1. `test_atomic_transaction_save_success` - Should pass without changes
+2. `test_atomic_transaction_rollback_on_error` - Should demonstrate proper rollback
+3. `test_save_transactions_table_basic_transactions` - Should show data persistence
+4. All existing db_interface tests should pass without modification
+
+## Dependencies
+- Database architecture review
+- Session management implementation
+- Connection pooling strategy
+- Transaction isolation level configuration
+
+## Notes
+This bug was discovered during test suite execution for the enhanced database interface architecture. The issue prevents proper validation of the new atomic transaction features and poses a critical risk to data integrity.
+
+## Related Issues
+- May be related to database URL configuration differences
+- Could affect performance due to multiple database connections
+- Might impact concurrent access patterns
+
+---
+
+**CRITICAL**: This issue must be resolved before the enhanced atomic transaction features can be considered production-ready.

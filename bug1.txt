@@ -1,0 +1,71 @@
+Bug Report: Detached SQLAlchemy Objects and Lazy Loading Issues
+
+**Problem:**
+When using the `Database` class (core/database/db_manager.py) to retrieve objects (e.g., `Category`, `Transaction`), the returned SQLAlchemy model instances are "detached" from their database session immediately after retrieval. This occurs because each CRUD operation method in `Database` (e.g., `get_category`, `get_transaction`) creates and closes its own session.
+
+**Impact:**
+This detachment prevents the use of SQLAlchemy's lazy-loading feature for relationships. If an attempt is made to access a related object (e.g., `transaction.category.name`) on a detached instance, a `sqlalchemy.orm.exc.DetachedInstanceError` is raised.
+
+**Affected Areas:**
+1.  **Tests:** This issue was initially observed and addressed in the test suite (`tests/db_tests/test_category_crud.py`, `tests/db_tests/test_transaction_crud.py`) where assertions on lazy-loaded relationships failed. The tests were modified to explicitly retrieve related objects or assert foreign key IDs directly, rather than relying on lazy loading.
+2.  **Actual Application Usage:** Any part of the application that retrieves a model instance using `Database` methods and subsequently attempts to access a lazy-loaded relationship on that instance will encounter the `DetachedInstanceError`. This limits the flexibility and intended use of SQLAlchemy's ORM capabilities for navigating relationships.
+
+**Example Scenario (Actual Application):**
+```python
+from core.database.db_manager import Database
+
+db = Database()
+transaction = db.get_transaction(transaction_id=123) # Session closed after this line
+
+# This will raise DetachedInstanceError
+try:
+    category_name = transaction.category.name
+    print(f"Transaction category: {category_name}")
+except Exception as e:
+    print(f"Error accessing lazy-loaded relationship: {e}")
+```
+
+**Proposed Solution (High-Level):**
+The `Database` class's session management strategy needs to be re-evaluated for the actual application use case. Options include:
+*   **Session Scoping:** Implement a pattern (e.g., context manager, dependency injection) where a single session is used for a logical unit of work (e.g., a single API request, a CLI command execution) and only closed at the end of that unit.
+*   **Eager Loading:** For specific relationships known to be needed, modify `Database` methods to use eager loading (e.g., `session.query(Transaction).options(joinedload(Transaction.category)).get(id)`) to fetch related data within the active session.
+
+**Note:** The current test suite modifications are a workaround for the tests themselves and do not resolve the underlying architectural issue for the main application. The tests now explicitly verify relationships by retrieving both ends of the relationship separately, ensuring data integrity checks remain stringent.
+
+**Analysis by Gemini:**
+
+The bug report is accurate and well-analyzed. The core issue is the session management strategy in the `Database` class. Creating and closing a session for each database operation is not a scalable or correct approach for an application that uses an ORM like SQLAlchemy.
+
+The proposed solutions are both valid and represent standard best practices for handling this problem:
+
+1.  **Session Scoping:** This is the most robust and recommended solution. By ensuring that a single session is used for a logical unit of work, we can maintain the session's identity map and allow lazy loading to work as expected. A context manager or a dependency injection framework are excellent ways to implement this.
+
+2.  **Eager Loading:** This is a good solution for specific cases where you know you will always need the related objects. It can be more performant than lazy loading in some cases, as it avoids the "N+1" query problem. However, it's not a general solution for the entire application.
+
+**Recommendation:**
+
+I recommend implementing a session scoping mechanism. A context manager is a good, Pythonic way to achieve this. The `Database` class can be modified to provide a session through a context manager, and the application code can then use that session to perform all database operations for a given unit of work.
+
+This will fix the `DetachedInstanceError` and allow the application to take full advantage of SQLAlchemy's powerful ORM features.
+
+**Fix Plan for Streamlit:**
+
+Based on the decision to use Streamlit for the application, the session management strategy needs to be adapted to Streamlit's execution model. The following plan incorporates best practices for using SQLAlchemy with Streamlit:
+
+1.  **Update `db_manager.py`:**
+    *   The `Database` class will be modified to use `@st.cache_resource` to initialize the SQLAlchemy engine. This ensures the engine is created only once per application lifecycle.
+    *   The `get_session` method will be updated to use `st.session_state` to store and retrieve the session. This will ensure that a single session is used for each user session, persisting across reruns.
+
+This approach will solve the `DetachedInstanceError` by ensuring that a single, persistent session is used for all database operations within a Streamlit user session. This will allow lazy loading to work as expected and is the recommended approach for building robust and scalable Streamlit applications with SQLAlchemy.
+
+**Fix Implementation Details:**
+
+The fix has been implemented as follows:
+
+1.  **`core/database/db_manager.py`:** The `Database` class has been refactored to integrate with Streamlit's session management. It now uses `@st.cache_resource` to create a singleton engine and `st.session_state` to maintain a persistent session for each user. This ensures that objects retrieved from the database remain attached to a session, allowing for lazy loading of relationships.
+
+2.  **`core/database/utility.py`:** The database utility script has been decoupled from the `Database` class. It now manages its own database connection, ensuring it remains a functional standalone tool for database administration without interfering with the Streamlit application's session management.
+
+**Action Item for Tester:**
+
+The workarounds implemented in the test suite (`tests/db_tests/test_category_crud.py` and `tests/db_tests/test_transaction_crud.py`) should now be reverted. The tests should be updated to directly assert lazy-loaded relationships on the model instances returned by the `Database` class. This will confirm that the fix is working as expected and that the `DetachedInstanceError` is resolved.
