@@ -135,10 +135,7 @@ Standard Schema Target:
 ├─ transaction_date: datetime (required)
 ├─ description: str (optional)
 ├─ category: str (optional, from AI)
-├─ sub_category: str (optional, from AI)
-├─ ai_confidence: float (optional, from AI)
-├─ created_at: datetime (system generated)
-└─ updated_at: datetime (system generated)
+└─ sub_category: str (optional, from AI)
 
 Raw Column Mapping Patterns:
 ├─ Amount Columns:

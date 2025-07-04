@@ -32,16 +32,15 @@ class DataProcessor:
     - transaction_date: datetime (when transaction occurred)
     - category: str (main category name)
     - sub_category: str (sub-category name)
-    - created_at: datetime (system timestamp)
-    - updated_at: datetime (last modification timestamp)
+    
+    Note: created_at and updated_at are handled internally by db_interface
     """
     
     def __init__(self):
         """Initialize the data processor with standard column mappings."""
         # Standard column names expected by db_interface (from architecture spec)
         self.db_interface_columns = [
-            'description', 'amount', 'transaction_date', 'category', 
-            'sub_category', 'created_at', 'updated_at'
+            'description', 'amount', 'transaction_date', 'category', 'sub_category'
         ]
         
         # Simple column mapping patterns for common bank statement formats
@@ -92,12 +91,8 @@ class DataProcessor:
         # Step 3: Add AI-powered categories
         categorized_df = self.add_ai_categories(cleaned_df)
         
-        # Step 4: Add system timestamps
-        now = datetime.now()
-        categorized_df['created_at'] = now
-        categorized_df['updated_at'] = now
-        
-        # Step 5: Ensure only db_interface expected columns are present
+        # Step 4: Ensure only db_interface expected columns are present
+        # Note: created_at and updated_at are handled internally by db_interface
         final_df = categorized_df[self.db_interface_columns].copy()
         
         return final_df
@@ -174,9 +169,6 @@ class DataProcessor:
             if col not in mapped_df.columns:
                 if col in ['category', 'sub_category']:
                     mapped_df[col] = None
-                elif col in ['created_at', 'updated_at']:
-                    # Will be set in process_raw_data
-                    pass
         
         return mapped_df
 

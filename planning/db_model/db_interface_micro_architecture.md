@@ -69,9 +69,7 @@ Columns:
 ├─ amount: float (required, transaction amount)
 ├─ transaction_date: datetime (required, when transaction occurred)
 ├─ category: str (optional, main category name)
-├─ sub_category: str (optional, sub-category name)
-├─ created_at: datetime (system timestamp)
-└─ updated_at: datetime (last modification timestamp)
+└─ sub_category: str (optional, sub-category name)
 
 Usage: Raw data for all UI components to process as needed
 ```
@@ -81,9 +79,7 @@ Usage: Raw data for all UI components to process as needed
 categories_df: pd.DataFrame
 Columns:
 ├─ name: str (category name)
-├─ parent_category: str (parent name, null for top-level)
-├─ created_at: datetime (when category was created)
-└─ updated_at: datetime (last modification)
+└─ parent_category: str (parent name, null for top-level)
 
 Usage: Raw category hierarchy for components to analyze and display
 ```
