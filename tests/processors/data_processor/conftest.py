@@ -1,210 +1,187 @@
 """
-Pytest configuration and fixtures for DataProcessor tests.
+Shared fixtures and test data for DataProcessor tests.
 
-This module provides shared fixtures and test data for testing
-the DataProcessor component with realistic banking scenarios.
+Provides reusable test data and fixtures following the test plan architecture.
 """
 
-import pytest
 import pandas as pd
+import pytest
 from datetime import datetime, timedelta
-from typing import Dict, Any, List
-import tempfile
-import os
-
-from core.processors.data_processor import DataProcessor
+from typing import Dict, Any
 
 
 @pytest.fixture
 def data_processor():
     """Create a DataProcessor instance for testing."""
+    from core.processors.data_processor import DataProcessor
     return DataProcessor()
 
 
 @pytest.fixture
-def sample_chase_data() -> pd.DataFrame:
-    """Sample Chase bank CSV format data."""
+def standard_raw_data() -> pd.DataFrame:
+    """Standard bank statement format with exact column name matches."""
     return pd.DataFrame({
-        'Transaction Date': ['01/15/2024', '01/16/2024', '01/17/2024'],
-        'Description': ['GROCERY STORE PURCHASE', 'GAS STATION', 'RESTAURANT MEAL'],
-        'Amount': ['-85.32', '-45.67', '-28.50'],
-        'Balance': ['1234.56', '1188.89', '1160.39']
+        'transaction_date': ['2024-01-15', '2024-01-16', '2024-01-17'],
+        'description': ['Amazon Purchase', 'Salary Credit', 'ATM Withdrawal'],
+        'amount': [1500.50, 50000.00, 2000.00],
+        'category': [None, None, None],
+        'sub_category': [None, None, None]
     })
 
 
 @pytest.fixture
-def sample_bofa_data() -> pd.DataFrame:
-    """Sample Bank of America CSV format data."""
+def variant_column_names_data() -> pd.DataFrame:
+    """Bank statement with variant column naming conventions."""
     return pd.DataFrame({
-        'Date': ['1/15/2024', '1/16/2024', '1/17/2024'],
-        'Description': ['WHOLE FOODS MARKET', 'SHELL GAS STATION', 'STARBUCKS COFFEE'],
-        'Amount': [-85.32, -45.67, -28.50],
-        'Running Bal.': [1234.56, 1188.89, 1160.39]
+        'date': ['15/01/2024', '16/01/2024', '17/01/2024'],
+        'transaction details': ['Swiggy Food Order', 'Metro Card Recharge', 'Movie Ticket'],
+        'transaction amount': ['Rs 450.75', '₹ 500.00', '350'],
+        'type': [None, None, None]
     })
 
 
 @pytest.fixture
-def sample_wells_fargo_data() -> pd.DataFrame:
-    """Sample Wells Fargo CSV format data."""
+def debit_credit_format_data() -> pd.DataFrame:
+    """Bank statement with separate debit and credit columns."""
     return pd.DataFrame({
-        'Date': ['01/15/2024', '01/16/2024', '01/17/2024'],
-        'Amount': ['(85.32)', '(45.67)', '(28.50)'],
-        'Description': ['SAFEWAY GROCERY', 'CHEVRON GAS', 'CHIPOTLE RESTAURANT'],
-        'Balance': ['1,234.56', '1,188.89', '1,160.39']
+        'posting_date': ['2024-01-15', '2024-01-16', '2024-01-17'],
+        'particulars': ['Restaurant Bill', 'Salary', 'Cash Withdrawal'],
+        'debit': [750.00, None, 1000.00],
+        'credit': [None, 45000.00, None]
     })
 
 
 @pytest.fixture
-def sample_credit_card_data() -> pd.DataFrame:
-    """Sample credit card statement format data."""
+def messy_data() -> pd.DataFrame:
+    """Mixed valid/invalid data with formatting issues."""
     return pd.DataFrame({
-        'Trans. Date': ['01/15/2024', '01/16/2024', '01/17/2024'],
-        'Description': ['AMAZON.COM PURCHASE', 'UBER RIDE', 'NETFLIX SUBSCRIPTION'],
-        'Amount': ['$85.32', '$15.50', '$12.99'],
-        'Category': ['Shopping', 'Transportation', 'Entertainment']
-    })
-
-
-@pytest.fixture
-def sample_manual_entry_data() -> pd.DataFrame:
-    """Sample manually entered transaction data."""
-    return pd.DataFrame({
-        'date': ['2024-01-15', '2024-01-16', '2024-01-17'],
-        'description': ['Cash grocery shopping', 'Coffee shop tip', 'Parking meter'],
-        'amount': [25.00, 3.50, 2.00],
-        'category': ['Groceries', 'Food & Dining', 'Transportation']
+        'date': ['15-01-2024', 'invalid_date', '17/01/2024', ''],
+        'description': ['Valid Transaction', '', 'Another Valid', '   '],
+        'amount': ['1,500.50', 'not_a_number', '2000', '0'],
+        'extra_column': ['ignore', 'this', 'column', 'data']
     })
 
 
 @pytest.fixture
 def empty_dataframe() -> pd.DataFrame:
-    """Empty DataFrame for testing edge cases."""
+    """Empty DataFrame for error testing."""
     return pd.DataFrame()
 
 
 @pytest.fixture
-def malformed_data() -> pd.DataFrame:
-    """Malformed data for error testing."""
+def no_mappable_columns_data() -> pd.DataFrame:
+    """DataFrame with no mappable columns."""
     return pd.DataFrame({
-        'Random Column': ['invalid', 'data', 'here'],
-        'Another Column': [1, 2, 3],
-        'No Standard Columns': ['test', 'test', 'test']
+        'random_col1': ['data1', 'data2'],
+        'random_col2': ['data3', 'data4'],
+        'unmappable': ['data5', 'data6']
+    })
+
+
+@pytest.fixture
+def expected_standard_output() -> pd.DataFrame:
+    """Expected output for standard raw data after processing."""
+    # TODO: Enable when AI backend is available - Update expected categories
+    return pd.DataFrame({
+        'description': ['Amazon Purchase', 'Salary Credit', 'ATM Withdrawal'],
+        'amount': [1500.50, 50000.00, 2000.00],
+        'transaction_date': pd.to_datetime(['2024-01-15', '2024-01-16', '2024-01-17']),
+        'category': [None, None, None],  # Will be populated by AI when available
+        'sub_category': [None, None, None]  # Will be populated by AI when available
+    })
+
+
+@pytest.fixture
+def categorization_test_data() -> pd.DataFrame:
+    """Data specifically for testing AI categorization logic."""
+    return pd.DataFrame({
+        'transaction_date': pd.to_datetime(['2024-01-15', '2024-01-16', '2024-01-17', '2024-01-18', '2024-01-19']),
+        'description': [
+            'Amazon Shopping Purchase',
+            'Swiggy Food Delivery',
+            'Unknown Merchant',
+            'UPI Transfer to John',
+            'ATM Cash Withdrawal'
+        ],
+        'amount': [2500.00, 450.75, 150.00, 15000.00, 2000.00],
+        'category': [None, None, None, None, None],
+        'sub_category': [None, None, None, None, None]
     })
 
 
 @pytest.fixture
 def large_dataset() -> pd.DataFrame:
-    """Large dataset for volume testing (500 transactions)."""
-    dates = []
-    descriptions = []
-    amounts = []
-    balances = []
-    
-    base_date = datetime(2024, 1, 1)
-    base_balance = 5000.00
-    
-    transaction_types = [
-        ('GROCERY STORE', -75.50),
-        ('GAS STATION', -45.00),
-        ('RESTAURANT', -35.25),
-        ('COFFEE SHOP', -5.50),
-        ('ONLINE PURCHASE', -125.75),
-        ('SALARY DEPOSIT', 2500.00),
-        ('UTILITY BILL', -85.30),
-        ('PHONE BILL', -65.00),
-        ('SUBSCRIPTION', -12.99),
-        ('ATM WITHDRAWAL', -100.00)
-    ]
-    
-    current_balance = base_balance
-    for i in range(500):
-        # Generate date
-        current_date = base_date + timedelta(days=i // 3)
-        dates.append(current_date.strftime('%m/%d/%Y'))
-        
-        # Pick random transaction type
-        desc, amount = transaction_types[i % len(transaction_types)]
-        descriptions.append(f"{desc} {i+1}")
-        amounts.append(amount)
-        
-        # Update balance
-        current_balance += amount
-        balances.append(current_balance)
+    """Larger dataset for integration testing."""
+    dates = [(datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(50)]
+    descriptions = [
+        'Amazon Purchase', 'Swiggy Order', 'Salary Credit', 'ATM Withdrawal', 'Metro Recharge',
+        'Restaurant Bill', 'Uber Ride', 'Netflix Subscription', 'Electricity Bill', 'Medical Store'
+    ] * 5
+    amounts = [1500.50, 450.75, 50000.00, 2000.00, 500.00] * 10
     
     return pd.DataFrame({
-        'Transaction Date': dates,
-        'Description': descriptions,
-        'Amount': amounts,
-        'Balance': balances
+        'transaction_date': dates,
+        'description': descriptions,
+        'amount': amounts
     })
 
 
 @pytest.fixture
-def edge_case_data() -> pd.DataFrame:
-    """Edge case data with problematic values."""
+def currency_symbols_data() -> pd.DataFrame:
+    """Data with various currency symbols and formatting."""
     return pd.DataFrame({
-        'Date': ['01/15/2024', '02/30/2024', 'invalid_date', '01/17/2024'],
-        'Description': [
-            'Normal transaction',
-            'Very long description that goes on and on and contains special characters !@#$%^&*()_+-=[]{}|;:,.<>?',
-            '',  # Empty description
-            'Unicode transaction: café, naïve, résumé'
-        ],
-        'Amount': ['100.50', 'invalid_amount', '0', '999999.99'],
-        'Balance': ['1000.00', '900.00', '900.00', '1000899.99']
+        'date': ['2024-01-15', '2024-01-16', '2024-01-17'],
+        'details': ['Purchase 1', 'Purchase 2', 'Purchase 3'],
+        'amount': ['Rs 1,500.50', '₹ 2,000.00', '$150.75']
     })
 
 
 @pytest.fixture
-def mixed_format_data() -> List[pd.DataFrame]:
-    """Multiple DataFrames with different formats for mixed processing."""
-    return [
-        pd.DataFrame({  # Chase format
-            'Transaction Date': ['01/15/2024', '01/16/2024'],
-            'Description': ['GROCERY STORE', 'GAS STATION'],
-            'Amount': ['-85.32', '-45.67'],
-            'Balance': ['1234.56', '1188.89']
-        }),
-        pd.DataFrame({  # Manual entry format
-            'date': ['2024-01-17', '2024-01-18'],
-            'description': ['Cash purchase', 'Tip'],
-            'amount': [25.00, 5.00],
-            'balance': [1213.89, 1218.89]
-        })
-    ]
+def duplicate_transactions_data() -> pd.DataFrame:
+    """Data with duplicate transactions for testing deduplication."""
+    return pd.DataFrame({
+        'transaction_date': ['2024-01-15', '2024-01-15', '2024-01-16'],
+        'description': ['Amazon Purchase', 'Amazon Purchase', 'Different Purchase'],
+        'amount': [1500.50, 1500.50, 2000.00]
+    })
 
 
 @pytest.fixture
-def temp_csv_file():
-    """Create a temporary CSV file for file-based testing."""
-    temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
-    temp_file.write('Date,Description,Amount,Balance\n')
-    temp_file.write('01/15/2024,GROCERY STORE,-85.32,1234.56\n')
-    temp_file.write('01/16/2024,GAS STATION,-45.67,1188.89\n')
-    temp_file.close()
+def edge_case_amounts() -> pd.DataFrame:
+    """Data with edge case amounts (very small, very large, zero)."""
+    return pd.DataFrame({
+        'transaction_date': ['2024-01-15', '2024-01-16', '2024-01-17', '2024-01-18'],
+        'description': ['Small Purchase', 'Large Purchase', 'Zero Amount', 'Regular Purchase'],
+        'amount': [0.01, 100000.00, 0.00, 1500.50]
+    })
+
+
+def create_test_dataframe(columns: Dict[str, Any]) -> pd.DataFrame:
+    """Helper function to create test DataFrames with specified columns."""
+    return pd.DataFrame(columns)
+
+
+def assert_dataframe_schema(df: pd.DataFrame, expected_columns: list) -> None:
+    """Helper function to assert DataFrame has expected schema."""
+    assert list(df.columns) == expected_columns, f"Expected columns {expected_columns}, got {list(df.columns)}"
     
-    yield temp_file.name
+    # Check data types
+    assert df['amount'].dtype in ['float64', 'int64'], "Amount should be numeric"
+    assert pd.api.types.is_datetime64_any_dtype(df['transaction_date']), "transaction_date should be datetime"
+    assert df['description'].dtype == 'object', "description should be string/object type"
+    assert df['category'].dtype == 'object', "category should be string/object type"
+    assert df['sub_category'].dtype == 'object', "sub_category should be string/object type"
+
+
+def assert_processing_summary(summary: Dict, original_rows: int, expected_processed: int) -> None:
+    """Helper function to assert processing summary is correct."""
+    assert 'original_rows' in summary
+    assert 'processed_rows' in summary
+    assert 'rows_removed' in summary
+    assert 'categories_assigned' in summary
+    assert 'processing_success' in summary
     
-    # Cleanup
-    os.unlink(temp_file.name)
-
-
-@pytest.fixture
-def expected_standard_columns() -> List[str]:
-    """Expected standard column names after processing."""
-    return ['description', 'amount', 'transaction_date', 'category', 'sub_category']
-
-
-@pytest.fixture
-def mock_ai_categories() -> Dict[str, str]:
-    """Mock AI categorization results."""
-    return {
-        'GROCERY STORE': 'Groceries',
-        'GAS STATION': 'Transportation',
-        'RESTAURANT': 'Food & Dining',
-        'COFFEE SHOP': 'Food & Dining',
-        'AMAZON': 'Shopping',
-        'NETFLIX': 'Entertainment',
-        'SALARY': 'Income',
-        'UTILITY': 'Bills & Utilities'
-    }
+    assert summary['original_rows'] == original_rows
+    assert summary['processed_rows'] == expected_processed
+    assert summary['rows_removed'] == original_rows - expected_processed
+    assert summary['processing_success'] is True

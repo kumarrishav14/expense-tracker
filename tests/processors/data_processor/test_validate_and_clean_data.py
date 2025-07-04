@@ -1,346 +1,235 @@
 """
-Tests for DataProcessor.validate_and_clean_data() method.
+Data validation and cleaning tests for DataProcessor.
 
-This module tests data validation and cleaning functionality with
-realistic personal banking scenarios and edge cases.
+Tests data cleaning and validation operations.
 """
 
-import pytest
 import pandas as pd
-from datetime import datetime, timedelta
-
-from core.processors.data_processor import DataProcessor
+import pytest
+from datetime import datetime
 
 
 class TestValidateAndCleanData:
-    """Test cases for the validate_and_clean_data() method."""
-
-    def test_validate_clean_standard_data(self, data_processor):
-        """Test validation and cleaning of standard, well-formatted data."""
-        input_data = pd.DataFrame({
-            'date': ['01/15/2024', '01/16/2024', '01/17/2024'],
-            'description': ['GROCERY STORE', 'GAS STATION', 'RESTAURANT'],
-            'amount': ['-85.32', '-45.67', '-28.50'],
-            'balance': ['1234.56', '1188.89', '1160.39']
+    """Test data validation and cleaning functionality."""
+    
+    def test_date_parsing_standard_formats(self, data_processor):
+        """Test parsing of various standard date formats."""
+        test_data = pd.DataFrame({
+            'transaction_date': ['2024-01-15', '15/01/2024', '01-15-2024', '15-Jan-2024'],
+            'description': ['Trans 1', 'Trans 2', 'Trans 3', 'Trans 4'],
+            'amount': [1000.00, 2000.00, 3000.00, 4000.00]
         })
         
-        result = data_processor.validate_and_clean_data(input_data)
+        result = data_processor.validate_and_clean_data(test_data)
         
-        assert result is not None
-        assert isinstance(result, pd.DataFrame)
-        assert len(result) == 3
-
-    def test_validate_date_formats(self, data_processor):
-        """Test validation and standardization of various date formats."""
-        input_data = pd.DataFrame({
-            'date': ['01/15/2024', '1/16/2024', '2024-01-17', '01-18-2024'],
-            'description': ['STORE1', 'STORE2', 'STORE3', 'STORE4'],
-            'amount': ['-85.32', '-45.67', '-28.50', '-15.25'],
-            'balance': ['1000.00', '954.33', '925.83', '910.58']
+        # Verify all dates were parsed successfully
+        assert len(result) == 4
+        assert pd.api.types.is_datetime64_any_dtype(result['transaction_date'])
+        
+        # Verify no null dates
+        assert not result['transaction_date'].isnull().any()
+    
+    def test_invalid_date_removal(self, data_processor):
+        """Test removal of rows with unparseable dates."""
+        test_data = pd.DataFrame({
+            'transaction_date': ['2024-01-15', 'invalid_date', '2024-01-17', ''],
+            'description': ['Valid 1', 'Invalid', 'Valid 2', 'Empty Date'],
+            'amount': [1000.00, 2000.00, 3000.00, 4000.00]
         })
         
-        result = data_processor.validate_and_clean_data(input_data)
+        result = data_processor.validate_and_clean_data(test_data)
         
-        assert result is not None
-        assert isinstance(result, pd.DataFrame)
-        # All dates should be standardized to consistent format
-
-    def test_validate_invalid_dates(self, data_processor):
-        """Test handling of invalid date formats."""
-        input_data = pd.DataFrame({
-            'date': ['01/15/2024', '02/30/2024', 'invalid_date', '13/45/2024'],
-            'description': ['VALID TRANSACTION', 'INVALID DATE 1', 'INVALID DATE 2', 'INVALID DATE 3'],
-            'amount': ['-85.32', '-45.67', '-28.50', '-15.25'],
-            'balance': ['1000.00', '954.33', '925.83', '910.58']
+        # Verify invalid date rows were removed
+        assert len(result) == 2  # Only 2 valid dates
+        assert 'Invalid' not in result['description'].values
+        assert 'Empty Date' not in result['description'].values
+    
+    def test_amount_currency_symbol_removal(self, data_processor):
+        """Test removal of currency symbols from amount fields."""
+        test_data = pd.DataFrame({
+            'transaction_date': ['2024-01-15', '2024-01-16', '2024-01-17'],
+            'description': ['Trans 1', 'Trans 2', 'Trans 3'],
+            'amount': ['Rs 1,500.50', '₹ 2,000.00', '$150.75']
         })
         
-        result = data_processor.validate_and_clean_data(input_data)
+        result = data_processor.validate_and_clean_data(test_data)
         
-        assert result is not None
-        # Should handle invalid dates gracefully - either fix, flag, or remove
-
-    def test_validate_future_dates(self, data_processor):
-        """Test validation of future dates (should be flagged as invalid)."""
-        future_date = (datetime.now() + timedelta(days=30)).strftime('%m/%d/%Y')
-        
-        input_data = pd.DataFrame({
-            'date': ['01/15/2024', future_date],
-            'description': ['PAST TRANSACTION', 'FUTURE TRANSACTION'],
-            'amount': ['-85.32', '-45.67'],
-            'balance': ['1000.00', '954.33']
+        # Verify currency symbols were removed and amounts are numeric
+        assert result['amount'].dtype in ['float64', 'int64']
+        assert abs(result['amount'].iloc[0] - 1500.50) < 0.01
+        assert abs(result['amount'].iloc[1] - 2000.00) < 0.01
+        assert abs(result['amount'].iloc[2] - 150.75) < 0.01
+    
+    def test_amount_comma_removal(self, data_processor):
+        """Test removal of commas from amount fields."""
+        test_data = pd.DataFrame({
+            'transaction_date': ['2024-01-15', '2024-01-16'],
+            'description': ['Trans 1', 'Trans 2'],
+            'amount': ['1,500.50', '10,000.00']
         })
         
-        result = data_processor.validate_and_clean_data(input_data)
+        result = data_processor.validate_and_clean_data(test_data)
         
-        assert result is not None
-        # Future dates should be flagged or handled appropriately
-
-    def test_clean_amount_formats(self, data_processor):
-        """Test cleaning and validation of various amount formats."""
-        input_data = pd.DataFrame({
-            'date': ['01/15/2024', '01/16/2024', '01/17/2024', '01/18/2024'],
-            'description': ['STORE1', 'STORE2', 'STORE3', 'STORE4'],
-            'amount': ['-$85.32', '($45.67)', '-45.67', '28.50'],
-            'balance': ['1000.00', '954.33', '908.66', '937.16']
+        # Verify commas were removed
+        assert abs(result['amount'].iloc[0] - 1500.50) < 0.01
+        assert abs(result['amount'].iloc[1] - 10000.00) < 0.01
+    
+    def test_invalid_amount_removal(self, data_processor):
+        """Test removal of rows with unparseable amounts."""
+        test_data = pd.DataFrame({
+            'transaction_date': ['2024-01-15', '2024-01-16', '2024-01-17'],
+            'description': ['Valid', 'Invalid Amount', 'Valid 2'],
+            'amount': [1000.00, 'not_a_number', 2000.00]
         })
         
-        result = data_processor.validate_and_clean_data(input_data)
+        result = data_processor.validate_and_clean_data(test_data)
         
-        assert result is not None
-        assert isinstance(result, pd.DataFrame)
-        # All amounts should be cleaned and converted to consistent numeric format
-
-    def test_clean_balance_formats(self, data_processor):
-        """Test cleaning and validation of balance formats with commas and currency symbols."""
-        input_data = pd.DataFrame({
-            'date': ['01/15/2024', '01/16/2024', '01/17/2024'],
-            'description': ['STORE1', 'STORE2', 'STORE3'],
-            'amount': ['-85.32', '-45.67', '-28.50'],
-            'balance': ['$1,234.56', '1,188.89', '$1,160.39']
+        # Verify invalid amount row was removed
+        assert len(result) == 2
+        assert 'Invalid Amount' not in result['description'].values
+    
+    def test_description_whitespace_cleaning(self, data_processor):
+        """Test cleaning of whitespace in description fields."""
+        test_data = pd.DataFrame({
+            'transaction_date': ['2024-01-15', '2024-01-16'],
+            'description': ['  Transaction 1  ', '\tTransaction 2\n'],
+            'amount': [1000.00, 2000.00]
         })
         
-        result = data_processor.validate_and_clean_data(input_data)
+        result = data_processor.validate_and_clean_data(test_data)
         
-        assert result is not None
-        assert isinstance(result, pd.DataFrame)
-        # Balances should be cleaned of currency symbols and commas
-
-    def test_validate_invalid_amounts(self, data_processor):
-        """Test handling of invalid amount values."""
-        input_data = pd.DataFrame({
-            'date': ['01/15/2024', '01/16/2024', '01/17/2024'],
-            'description': ['VALID AMOUNT', 'INVALID AMOUNT 1', 'INVALID AMOUNT 2'],
-            'amount': ['-85.32', 'invalid_amount', 'abc.def'],
-            'balance': ['1000.00', '954.33', '925.83']
+        # Verify whitespace was cleaned
+        assert result['description'].iloc[0] == 'Transaction 1'
+        assert result['description'].iloc[1] == 'Transaction 2'
+    
+    def test_empty_description_removal(self, data_processor):
+        """Test removal of rows with empty descriptions."""
+        test_data = pd.DataFrame({
+            'transaction_date': ['2024-01-15', '2024-01-16', '2024-01-17'],
+            'description': ['Valid Transaction', '', '   '],
+            'amount': [1000.00, 2000.00, 3000.00]
         })
         
-        result = data_processor.validate_and_clean_data(input_data)
+        result = data_processor.validate_and_clean_data(test_data)
         
-        assert result is not None
-        # Should handle invalid amounts gracefully
-
-    def test_validate_required_fields(self, data_processor):
-        """Test validation of required fields (date, description, amount)."""
-        input_data = pd.DataFrame({
-            'date': ['01/15/2024', '', '01/17/2024'],
-            'description': ['VALID TRANSACTION', 'MISSING DATE', ''],
-            'amount': ['-85.32', '-45.67', ''],
-            'balance': ['1000.00', '954.33', '925.83']
+        # Verify empty description rows were removed
+        assert len(result) == 1
+        assert result['description'].iloc[0] == 'Valid Transaction'
+    
+    def test_duplicate_transaction_removal(self, data_processor):
+        """Test removal of duplicate transactions."""
+        test_data = pd.DataFrame({
+            'transaction_date': ['2024-01-15', '2024-01-15', '2024-01-16'],
+            'description': ['Amazon Purchase', 'Amazon Purchase', 'Different Purchase'],
+            'amount': [1500.50, 1500.50, 2000.00]
         })
         
-        result = data_processor.validate_and_clean_data(input_data)
+        result = data_processor.validate_and_clean_data(test_data)
         
-        assert result is not None
-        # Should flag or handle missing required fields
-
-    def test_clean_description_text(self, data_processor):
-        """Test cleaning and normalization of description text."""
-        input_data = pd.DataFrame({
-            'date': ['01/15/2024', '01/16/2024', '01/17/2024'],
-            'description': [
-                '  GROCERY STORE  ',  # Extra whitespace
-                'gas station',  # Lowercase
-                'RESTAURANT & BAR'  # Special characters
-            ],
-            'amount': ['-85.32', '-45.67', '-28.50'],
-            'balance': ['1000.00', '954.33', '925.83']
+        # Verify duplicate was removed
+        assert len(result) == 2
+        amazon_purchases = result[result['description'] == 'Amazon Purchase']
+        assert len(amazon_purchases) == 1
+    
+    def test_numeric_amount_conversion(self, data_processor):
+        """Test conversion of string amounts to numeric."""
+        test_data = pd.DataFrame({
+            'transaction_date': ['2024-01-15', '2024-01-16'],
+            'description': ['Trans 1', 'Trans 2'],
+            'amount': ['1500.50', '2000']  # String amounts
         })
         
-        result = data_processor.validate_and_clean_data(input_data)
+        result = data_processor.validate_and_clean_data(test_data)
         
-        assert result is not None
-        assert isinstance(result, pd.DataFrame)
-        # Descriptions should be cleaned (trimmed, normalized case, etc.)
-
-    def test_handle_null_nan_values(self, data_processor):
-        """Test handling of null and NaN values."""
-        input_data = pd.DataFrame({
-            'date': ['01/15/2024', '01/16/2024', '01/17/2024'],
-            'description': ['STORE1', None, 'STORE3'],
-            'amount': ['-85.32', '-45.67', None],
-            'balance': ['1000.00', None, '925.83']
+        # Verify amounts are now numeric
+        assert result['amount'].dtype in ['float64', 'int64']
+        assert isinstance(result['amount'].iloc[0], (int, float))
+        assert isinstance(result['amount'].iloc[1], (int, float))
+    
+    def test_all_invalid_data_error(self, data_processor):
+        """Test error when all rows are invalid after cleaning."""
+        test_data = pd.DataFrame({
+            'transaction_date': ['invalid_date', 'another_invalid'],
+            'description': ['Trans 1', 'Trans 2'],
+            'amount': [1000.00, 2000.00]
         })
         
-        result = data_processor.validate_and_clean_data(input_data)
-        
-        assert result is not None
-        # Should handle null/NaN values appropriately
-
-    def test_detect_duplicate_transactions(self, data_processor):
-        """Test detection and handling of duplicate transactions."""
-        input_data = pd.DataFrame({
-            'date': ['01/15/2024', '01/15/2024', '01/16/2024'],
-            'description': ['GROCERY STORE', 'GROCERY STORE', 'GAS STATION'],
-            'amount': ['-85.32', '-85.32', '-45.67'],
-            'balance': ['1000.00', '914.68', '869.01']
+        with pytest.raises(ValueError, match="All rows were removed during data cleaning"):
+            data_processor.validate_and_clean_data(test_data)
+    
+    def test_mixed_valid_invalid_data(self, data_processor):
+        """Test processing of mixed valid and invalid data."""
+        test_data = pd.DataFrame({
+            'transaction_date': ['2024-01-15', 'invalid_date', '2024-01-17', ''],
+            'description': ['Valid 1', 'Invalid Date', 'Valid 2', 'Empty Date'],
+            'amount': [1000.00, 'invalid_amount', 3000.00, 4000.00]
         })
         
-        result = data_processor.validate_and_clean_data(input_data)
+        result = data_processor.validate_and_clean_data(test_data)
         
-        assert result is not None
-        # Should detect and handle potential duplicates
-
-    def test_validate_data_types(self, data_processor):
-        """Test validation and conversion of data types."""
-        input_data = pd.DataFrame({
-            'date': ['01/15/2024', '01/16/2024'],
-            'description': ['STORE1', 'STORE2'],
-            'amount': [-85.32, '-45.67'],  # Mixed numeric and string
-            'balance': [1000.00, '954.33']  # Mixed numeric and string
+        # Should keep only the first valid row (Valid 1)
+        # Second row has invalid date, third row is valid, fourth has empty date
+        assert len(result) >= 1  # At least one valid row should remain
+        assert 'Valid 1' in result['description'].values
+    
+    def test_date_type_conversion(self, data_processor):
+        """Test proper datetime type conversion."""
+        test_data = pd.DataFrame({
+            'transaction_date': ['2024-01-15', '2024-01-16'],
+            'description': ['Trans 1', 'Trans 2'],
+            'amount': [1000.00, 2000.00]
         })
         
-        result = data_processor.validate_and_clean_data(input_data)
+        result = data_processor.validate_and_clean_data(test_data)
         
-        assert result is not None
-        assert isinstance(result, pd.DataFrame)
-        # Data types should be consistent after validation
-
-    def test_validate_amount_ranges(self, data_processor):
-        """Test validation of reasonable amount ranges."""
-        input_data = pd.DataFrame({
-            'date': ['01/15/2024', '01/16/2024', '01/17/2024'],
-            'description': ['NORMAL PURCHASE', 'VERY LARGE PURCHASE', 'MICRO PURCHASE'],
-            'amount': ['-85.32', '-999999.99', '-0.01'],
-            'balance': ['1000.00', '0.01', '0.00']
+        # Verify transaction_date is datetime type
+        assert pd.api.types.is_datetime64_any_dtype(result['transaction_date'])
+        
+        # Verify specific datetime values
+        assert isinstance(result['transaction_date'].iloc[0], pd.Timestamp)
+    
+    def test_preserve_valid_data_integrity(self, data_processor):
+        """Test that valid data is preserved exactly during cleaning."""
+        test_data = pd.DataFrame({
+            'transaction_date': ['2024-01-15', '2024-01-16'],
+            'description': ['Amazon Purchase', 'Salary Credit'],
+            'amount': [1500.50, 50000.00]
         })
         
-        result = data_processor.validate_and_clean_data(input_data)
+        result = data_processor.validate_and_clean_data(test_data)
         
-        assert result is not None
-        # Should validate that amounts are within reasonable ranges
-
-    def test_validate_balance_calculations(self, data_processor):
-        """Test validation of balance calculations for consistency."""
-        input_data = pd.DataFrame({
-            'date': ['01/15/2024', '01/16/2024', '01/17/2024'],
-            'description': ['STORE1', 'STORE2', 'STORE3'],
-            'amount': ['-85.32', '-45.67', '-28.50'],
-            'balance': ['1000.00', '914.68', '886.18']  # Correct calculations
+        # Verify all data preserved
+        assert len(result) == 2
+        assert 'Amazon Purchase' in result['description'].values
+        assert 'Salary Credit' in result['description'].values
+        assert 1500.50 in result['amount'].values
+        assert 50000.00 in result['amount'].values
+    
+    def test_zero_amount_handling(self, data_processor):
+        """Test handling of zero amounts."""
+        test_data = pd.DataFrame({
+            'transaction_date': ['2024-01-15', '2024-01-16'],
+            'description': ['Zero Amount', 'Valid Amount'],
+            'amount': [0.00, 1000.00]
         })
         
-        result = data_processor.validate_and_clean_data(input_data)
+        result = data_processor.validate_and_clean_data(test_data)
         
-        assert result is not None
-        assert isinstance(result, pd.DataFrame)
-
-    def test_validate_inconsistent_balance_calculations(self, data_processor):
-        """Test handling of inconsistent balance calculations."""
-        input_data = pd.DataFrame({
-            'date': ['01/15/2024', '01/16/2024', '01/17/2024'],
-            'description': ['STORE1', 'STORE2', 'STORE3'],
-            'amount': ['-85.32', '-45.67', '-28.50'],
-            'balance': ['1000.00', '500.00', '200.00']  # Inconsistent calculations
+        # Zero amounts should be preserved (they're valid)
+        assert len(result) == 2
+        assert 0.00 in result['amount'].values
+    
+    def test_negative_amount_handling(self, data_processor):
+        """Test handling of negative amounts."""
+        test_data = pd.DataFrame({
+            'transaction_date': ['2024-01-15', '2024-01-16'],
+            'description': ['Negative Amount', 'Positive Amount'],
+            'amount': [-1000.00, 2000.00]
         })
         
-        result = data_processor.validate_and_clean_data(input_data)
+        result = data_processor.validate_and_clean_data(test_data)
         
-        assert result is not None
-        # Should flag inconsistent balance calculations
-
-    def test_clean_unicode_characters(self, data_processor):
-        """Test handling of Unicode characters in descriptions."""
-        input_data = pd.DataFrame({
-            'date': ['01/15/2024', '01/16/2024'],
-            'description': ['CAFÉ RESTAURANT', 'NAÏVE STORE'],
-            'amount': ['-85.32', '-45.67'],
-            'balance': ['1000.00', '954.33']
-        })
-        
-        result = data_processor.validate_and_clean_data(input_data)
-        
-        assert result is not None
-        assert isinstance(result, pd.DataFrame)
-
-    def test_clean_html_xml_content(self, data_processor):
-        """Test cleaning of HTML/XML content in descriptions."""
-        input_data = pd.DataFrame({
-            'date': ['01/15/2024', '01/16/2024'],
-            'description': ['<b>GROCERY STORE</b>', 'STORE &amp; MORE'],
-            'amount': ['-85.32', '-45.67'],
-            'balance': ['1000.00', '954.33']
-        })
-        
-        result = data_processor.validate_and_clean_data(input_data)
-        
-        assert result is not None
-        # Should clean HTML/XML content from descriptions
-
-    def test_handle_extremely_long_descriptions(self, data_processor):
-        """Test handling of extremely long description text."""
-        long_description = 'A' * 1000  # Very long description
-        
-        input_data = pd.DataFrame({
-            'date': ['01/15/2024', '01/16/2024'],
-            'description': ['NORMAL STORE', long_description],
-            'amount': ['-85.32', '-45.67'],
-            'balance': ['1000.00', '954.33']
-        })
-        
-        result = data_processor.validate_and_clean_data(input_data)
-        
-        assert result is not None
-        # Should handle very long descriptions appropriately
-
-    def test_validate_scientific_notation(self, data_processor):
-        """Test handling of scientific notation in amounts."""
-        input_data = pd.DataFrame({
-            'date': ['01/15/2024', '01/16/2024'],
-            'description': ['STORE1', 'STORE2'],
-            'amount': ['-8.532e1', '-4.567e1'],  # Scientific notation
-            'balance': ['1000.00', '954.33']
-        })
-        
-        result = data_processor.validate_and_clean_data(input_data)
-        
-        assert result is not None
-        # Should handle scientific notation correctly
-
-    def test_validate_different_currency_formats(self, data_processor):
-        """Test handling of different currency formats."""
-        input_data = pd.DataFrame({
-            'date': ['01/15/2024', '01/16/2024', '01/17/2024'],
-            'description': ['STORE1', 'STORE2', 'STORE3'],
-            'amount': ['USD -85.32', '€45.67', '¥28.50'],
-            'balance': ['1000.00', '954.33', '925.83']
-        })
-        
-        result = data_processor.validate_and_clean_data(input_data)
-        
-        assert result is not None
-        # Should handle different currency formats
-
-    def test_preserve_data_precision(self, data_processor):
-        """Test that data precision is preserved during cleaning."""
-        input_data = pd.DataFrame({
-            'date': ['01/15/2024', '01/16/2024'],
-            'description': ['STORE1', 'STORE2'],
-            'amount': ['-85.321', '-45.678'],  # 3 decimal places
-            'balance': ['1000.001', '954.323']
-        })
-        
-        result = data_processor.validate_and_clean_data(input_data)
-        
-        assert result is not None
-        assert isinstance(result, pd.DataFrame)
-        # Should preserve precision where appropriate
-
-    def test_validation_error_reporting(self, data_processor, edge_case_data):
-        """Test that validation errors are properly reported."""
-        result = data_processor.validate_and_clean_data(edge_case_data)
-        
-        assert result is not None
-        # Should provide information about validation issues found
-
-    def test_partial_validation_success(self, data_processor):
-        """Test handling when some rows pass validation and others fail."""
-        input_data = pd.DataFrame({
-            'date': ['01/15/2024', 'invalid_date', '01/17/2024'],
-            'description': ['VALID TRANSACTION', 'INVALID DATE', 'ANOTHER VALID'],
-            'amount': ['-85.32', 'invalid_amount', '-28.50'],
-            'balance': ['1000.00', '954.33', '925.83']
-        })
-        
-        result = data_processor.validate_and_clean_data(input_data)
-        
-        assert result is not None
-        # Should handle partial validation gracefully
+        # Negative amounts should be preserved (they're valid for debits)
+        assert len(result) == 2
+        assert -1000.00 in result['amount'].values
+        assert 2000.00 in result['amount'].values

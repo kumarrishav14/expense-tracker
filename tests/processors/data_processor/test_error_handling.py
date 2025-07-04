@@ -1,263 +1,305 @@
 """
-Tests for DataProcessor error handling and edge cases.
+Error handling tests for DataProcessor.
 
-This module tests error scenarios, edge cases, and exception handling
-for the DataProcessor component.
+Tests robust error handling and edge cases.
 """
 
-import pytest
 import pandas as pd
-from unittest.mock import patch, MagicMock
-
-from core.processors.data_processor import DataProcessor
+import pytest
 
 
-class TestDataProcessorErrorHandling:
-    """Test cases for error handling and edge cases."""
-
-    def test_none_input_handling(self, data_processor):
-        """Test handling of None input."""
-        processed_df, processing_processed_df, processing_result = data_processor.process_dataframe(None)
-        
-        assert processed_df is not None
-        if not processing_result.success:
-            assert not processing_result.success
-
-    def test_empty_dataframe_handling(self, data_processor, empty_dataframe):
-        """Test handling of empty DataFrame."""
-        processed_df, processing_processed_df, processing_result = data_processor.process_dataframe(empty_dataframe)
-        
-        assert processed_df is not None
-        if isinstance(processed_df, pd.DataFrame):
-            assert len(processed_df) == 0
-        else:
-            assert not processing_result.success
-
-    def test_invalid_dataframe_structure(self, data_processor):
-        """Test handling of invalid DataFrame structure."""
+class TestErrorHandling:
+    """Test error handling and edge cases."""
+    
+    def test_empty_dataframe_error(self, data_processor, empty_dataframe):
+        """Test proper error handling for empty DataFrame input."""
+        with pytest.raises(ValueError, match="Input DataFrame is empty"):
+            data_processor.process_raw_data(empty_dataframe)
+    
+    def test_no_mappable_columns_error(self, data_processor, no_mappable_columns_data):
+        """Test error when no required columns can be mapped."""
+        with pytest.raises(ValueError, match="Cannot map required columns"):
+            data_processor.process_raw_data(no_mappable_columns_data)
+    
+    def test_missing_amount_column_error(self, data_processor):
+        """Test error when amount column cannot be mapped."""
         invalid_data = pd.DataFrame({
-            'random_column_1': ['value1', 'value2'],
-            'random_column_2': ['value3', 'value4'],
-            'completely_unrelated': [1, 2]
+            'date': ['2024-01-15'],
+            'description': ['Test Transaction']
+            # Missing any amount-related columns
         })
         
-        processed_df, processing_processed_df, processing_result = data_processor.process_dataframe(invalid_data)
+        with pytest.raises(ValueError, match="Cannot map required columns.*amount"):
+            data_processor.process_raw_data(invalid_data)
+    
+    def test_missing_date_column_error(self, data_processor):
+        """Test error when date column cannot be mapped."""
+        invalid_data = pd.DataFrame({
+            'description': ['Test Transaction'],
+            'amount': [1000.00]
+            # Missing any date-related columns
+        })
         
-        # Should handle gracefully
-        assert processed_df is not None
-
-    def test_corrupted_data_handling(self, data_processor):
-        """Test handling of corrupted/malformed data."""
+        with pytest.raises(ValueError, match="Cannot map required columns.*transaction_date"):
+            data_processor.process_raw_data(invalid_data)
+    
+    def test_missing_description_column_error(self, data_processor):
+        """Test error when description column cannot be mapped."""
+        invalid_data = pd.DataFrame({
+            'date': ['2024-01-15'],
+            'amount': [1000.00]
+            # Missing any description-related columns
+        })
+        
+        with pytest.raises(ValueError, match="Cannot map required columns.*description"):
+            data_processor.process_raw_data(invalid_data)
+    
+    def test_all_invalid_dates_error(self, data_processor):
+        """Test error when all dates are invalid."""
+        invalid_data = pd.DataFrame({
+            'date': ['invalid_date', 'another_invalid', ''],
+            'description': ['Trans 1', 'Trans 2', 'Trans 3'],
+            'amount': [1000.00, 2000.00, 3000.00]
+        })
+        
+        with pytest.raises(ValueError, match="All rows were removed during data cleaning"):
+            data_processor.process_raw_data(invalid_data)
+    
+    def test_all_invalid_amounts_error(self, data_processor):
+        """Test error when all amounts are invalid."""
+        invalid_data = pd.DataFrame({
+            'date': ['2024-01-15', '2024-01-16'],
+            'description': ['Trans 1', 'Trans 2'],
+            'amount': ['not_a_number', 'also_invalid']
+        })
+        
+        with pytest.raises(ValueError, match="All rows were removed during data cleaning"):
+            data_processor.process_raw_data(invalid_data)
+    
+    def test_all_empty_descriptions_error(self, data_processor):
+        """Test error when all descriptions are empty."""
+        invalid_data = pd.DataFrame({
+            'date': ['2024-01-15', '2024-01-16'],
+            'description': ['', '   '],
+            'amount': [1000.00, 2000.00]
+        })
+        
+        with pytest.raises(ValueError, match="All rows were removed during data cleaning"):
+            data_processor.process_raw_data(invalid_data)
+    
+    def test_completely_corrupted_data_error(self, data_processor):
+        """Test handling of completely corrupted data."""
         corrupted_data = pd.DataFrame({
-            'Date': ['01/15/2024', 'corrupted_date', None],
-            'Description': ['STORE1', '', 'STORE3'],
-            'Amount': ['invalid_amount', None, 'also_invalid'],
-            'Balance': ['1000.00', 'corrupted_balance', '']
+            'random_col1': [None, None, None],
+            'random_col2': ['', '', ''],
+            'random_col3': [0, 0, 0]
         })
         
-        processed_df, processing_processed_df, processing_result = data_processor.process_dataframe(corrupted_data)
-        
-        # Should handle corrupted data gracefully
-        assert processed_df is not None
-
-    def test_extremely_large_values(self, data_processor):
-        """Test handling of extremely large numeric values."""
-        large_value_data = pd.DataFrame({
-            'Date': ['01/15/2024', '01/16/2024'],
-            'Description': ['LARGE TRANSACTION', 'NORMAL TRANSACTION'],
-            'Amount': ['999999999999.99', '-10.00'],
-            'Balance': ['999999999999.99', '999999999989.99']
+        with pytest.raises(ValueError, match="Cannot map required columns"):
+            data_processor.process_raw_data(corrupted_data)
+    
+    def test_date_parsing_failure_error(self, data_processor):
+        """Test error handling when date parsing completely fails."""
+        # Create data where date column exists but all values are unparseable
+        invalid_data = pd.DataFrame({
+            'transaction_date': ['not_a_date', 'invalid', 'bad_date'],
+            'description': ['Trans 1', 'Trans 2', 'Trans 3'],
+            'amount': [1000.00, 2000.00, 3000.00]
         })
         
-        processed_df, processing_processed_df, processing_result = data_processor.process_dataframe(large_value_data)
-        
-        # Should handle large values appropriately
-        assert processed_df is not None
-
-    def test_extremely_small_values(self, data_processor):
-        """Test handling of extremely small numeric values."""
-        small_value_data = pd.DataFrame({
-            'Date': ['01/15/2024', '01/16/2024'],
-            'Description': ['MICRO TRANSACTION', 'NORMAL TRANSACTION'],
-            'Amount': ['0.001', '-10.00'],
-            'Balance': ['1000.001', '990.001']
+        with pytest.raises(ValueError, match="All rows were removed during data cleaning"):
+            data_processor.process_raw_data(invalid_data)
+    
+    def test_amount_parsing_failure_error(self, data_processor):
+        """Test error handling when amount parsing completely fails."""
+        invalid_data = pd.DataFrame({
+            'date': ['2024-01-15', '2024-01-16'],
+            'description': ['Trans 1', 'Trans 2'],
+            'amount': ['definitely_not_a_number', 'also_not_a_number']
         })
         
-        processed_df, processing_processed_df, processing_result = data_processor.process_dataframe(small_value_data)
+        with pytest.raises(ValueError, match="All rows were removed during data cleaning"):
+            data_processor.process_raw_data(invalid_data)
+    
+    def test_mixed_valid_invalid_partial_processing(self, data_processor):
+        """Test partial processing continues when some data is valid."""
+        mixed_data = pd.DataFrame({
+            'date': ['2024-01-15', 'invalid_date', '2024-01-17'],
+            'description': ['Valid Trans', 'Invalid Date', 'Another Valid'],
+            'amount': [1000.00, 2000.00, 3000.00]
+        })
         
-        # Should handle small values appropriately
-        assert processed_df is not None
-
+        # Should not raise error, should process valid rows
+        result = data_processor.process_raw_data(mixed_data)
+        
+        # Verify partial processing worked
+        assert len(result) >= 1
+        assert len(result) < len(mixed_data)
+        assert 'Valid Trans' in result['description'].values or 'Another Valid' in result['description'].values
+    
+    def test_single_valid_row_processing(self, data_processor):
+        """Test processing when only one row is valid."""
+        mostly_invalid_data = pd.DataFrame({
+            'date': ['2024-01-15', 'invalid_date', 'another_invalid'],
+            'description': ['Only Valid Transaction', '', 'Invalid Empty'],
+            'amount': [1000.00, 'not_a_number', 'also_invalid']
+        })
+        
+        result = data_processor.process_raw_data(mostly_invalid_data)
+        
+        # Should process the one valid row
+        assert len(result) == 1
+        assert result['description'].iloc[0] == 'Only Valid Transaction'
+        assert result['amount'].iloc[0] == 1000.00
+    
+    def test_null_values_handling(self, data_processor):
+        """Test handling of null values in data."""
+        null_data = pd.DataFrame({
+            'date': ['2024-01-15', None, '2024-01-17'],
+            'description': ['Valid Trans', None, 'Another Valid'],
+            'amount': [1000.00, None, 3000.00]
+        })
+        
+        # Should process valid rows and skip null rows
+        result = data_processor.process_raw_data(null_data)
+        
+        assert len(result) >= 1
+        assert 'Valid Trans' in result['description'].values or 'Another Valid' in result['description'].values
+    
+    def test_extremely_large_amounts(self, data_processor):
+        """Test handling of extremely large amounts."""
+        large_amount_data = pd.DataFrame({
+            'date': ['2024-01-15'],
+            'description': ['Extremely Large Transaction'],
+            'amount': [999999999999.99]  # Very large amount
+        })
+        
+        # Should process successfully (no upper limit validation)
+        result = data_processor.process_raw_data(large_amount_data)
+        
+        assert len(result) == 1
+        assert result['amount'].iloc[0] == 999999999999.99
+        # TODO: Enable when AI backend is available - assert result['sub_category'].iloc[0] == 'Large Transaction'
+    
+    def test_extremely_small_amounts(self, data_processor):
+        """Test handling of extremely small amounts."""
+        small_amount_data = pd.DataFrame({
+            'date': ['2024-01-15'],
+            'description': ['Extremely Small Transaction'],
+            'amount': [0.001]  # Very small amount
+        })
+        
+        # Should process successfully
+        result = data_processor.process_raw_data(small_amount_data)
+        
+        assert len(result) == 1
+        assert result['amount'].iloc[0] == 0.001
+        # TODO: Enable when AI backend is available - assert result['sub_category'].iloc[0] == 'Small Transaction'
+    
+    def test_special_characters_in_descriptions(self, data_processor):
+        """Test handling of special characters in descriptions."""
+        special_char_data = pd.DataFrame({
+            'date': ['2024-01-15'],
+            'description': ['Transaction with special chars: @#$%^&*()'],
+            'amount': [1000.00]
+        })
+        
+        # Should process successfully
+        result = data_processor.process_raw_data(special_char_data)
+        
+        assert len(result) == 1
+        assert 'special chars' in result['description'].iloc[0]
+    
+    def test_unicode_characters_in_descriptions(self, data_processor):
+        """Test handling of unicode characters in descriptions."""
+        unicode_data = pd.DataFrame({
+            'date': ['2024-01-15'],
+            'description': ['Transaction with unicode: café résumé naïve'],
+            'amount': [1000.00]
+        })
+        
+        # Should process successfully
+        result = data_processor.process_raw_data(unicode_data)
+        
+        assert len(result) == 1
+        assert 'café' in result['description'].iloc[0]
+    
     def test_very_long_descriptions(self, data_processor):
-        """Test handling of very long description text."""
+        """Test handling of very long descriptions."""
         long_description = 'A' * 1000  # Very long description
         long_desc_data = pd.DataFrame({
-            'Date': ['01/15/2024', '01/16/2024'],
-            'Description': [long_description, 'NORMAL STORE'],
-            'Amount': ['-10.00', '-20.00'],
-            'Balance': ['1000.00', '980.00']
+            'date': ['2024-01-15'],
+            'description': [long_description],
+            'amount': [1000.00]
         })
         
-        processed_df, processing_processed_df, processing_result = data_processor.process_dataframe(long_desc_data)
+        # Should process successfully
+        result = data_processor.process_raw_data(long_desc_data)
         
-        # Should handle long descriptions gracefully
-        assert processed_df is not None
-
-    def test_special_characters_in_data(self, data_processor):
-        """Test handling of special characters and symbols."""
-        special_char_data = pd.DataFrame({
-            'Date': ['01/15/2024', '01/16/2024'],
-            'Description': ['STORE!@#$%^&*()', 'CAFÉ & RESTAURANT'],
-            'Amount': ['-$10.00', '€20.00'],
-            'Balance': ['$1,000.00', '€1,020.00']
+        assert len(result) == 1
+        assert len(result['description'].iloc[0]) == 1000
+    
+    def test_future_dates_handling(self, data_processor):
+        """Test handling of future dates."""
+        future_date_data = pd.DataFrame({
+            'date': ['2030-01-15'],  # Future date
+            'description': ['Future Transaction'],
+            'amount': [1000.00]
         })
         
-        processed_df, processing_processed_df, processing_result = data_processor.process_dataframe(special_char_data)
+        # Should process successfully (no date range validation)
+        result = data_processor.process_raw_data(future_date_data)
         
-        # Should handle special characters appropriately
-        assert processed_df is not None
-
-    def test_mixed_encoding_data(self, data_processor):
-        """Test handling of mixed character encodings."""
-        mixed_encoding_data = pd.DataFrame({
-            'Date': ['01/15/2024', '01/16/2024'],
-            'Description': ['NORMAL STORE', 'CAFÉ RÉSUMÉ NAÏVE'],
-            'Amount': ['-10.00', '-20.00'],
-            'Balance': ['1000.00', '980.00']
+        assert len(result) == 1
+        assert result['description'].iloc[0] == 'Future Transaction'
+    
+    def test_very_old_dates_handling(self, data_processor):
+        """Test handling of very old dates."""
+        old_date_data = pd.DataFrame({
+            'date': ['1990-01-15'],  # Very old date
+            'description': ['Old Transaction'],
+            'amount': [1000.00]
         })
         
-        processed_df, processing_processed_df, processing_result = data_processor.process_dataframe(mixed_encoding_data)
+        # Should process successfully (no date range validation)
+        result = data_processor.process_raw_data(old_date_data)
         
-        # Should handle mixed encodings appropriately
-        assert processed_df is not None
-
-    def test_memory_pressure_simulation(self, data_processor):
-        """Test behavior under simulated memory pressure."""
-        # Create a reasonably large dataset to test memory handling
-        large_data = pd.DataFrame({
-            'Date': ['01/15/2024'] * 10000,
-            'Description': ['STORE TRANSACTION'] * 10000,
-            'Amount': ['-10.00'] * 10000,
-            'Balance': [str(1000 - i * 10) for i in range(10000)]
-        })
-        
-        processed_df, processing_processed_df, processing_result = data_processor.process_dataframe(large_data)
-        
-        # Should handle large datasets without crashing
-        assert processed_df is not None
-
-    def test_concurrent_access_safety(self, data_processor, sample_chase_data):
-        """Test thread safety with concurrent access."""
-        # Basic test for concurrent access (real threading test would be more complex)
-        results = []
-        for i in range(5):
-            processed_df, processing_processed_df, processing_result = data_processor.process_dataframe(sample_chase_data.copy())
-            results.append(processed_df)
-        
-        # All results should be valid
-        for result in results:
-            assert processed_df is not None
-
-    @patch('core.processors.data_processor.DataProcessor.map_columns')
-    def test_map_columns_failure_handling(self, mock_map_columns, data_processor, sample_chase_data):
-        """Test handling of map_columns method failure."""
-        mock_map_columns.side_effect = Exception("Column mapping failed")
-        
-        processed_df, processing_processed_df, processing_result = data_processor.process_dataframe(sample_chase_data)
-        
-        # Should handle method failure gracefully
-        assert processed_df is not None
-
-    @patch('core.processors.data_processor.DataProcessor.validate_and_clean_data')
-    def test_validate_clean_failure_handling(self, mock_validate, data_processor, sample_chase_data):
-        """Test handling of validate_and_clean_data method failure."""
-        mock_validate.side_effect = Exception("Validation failed")
-        
-        processed_df, processing_processed_df, processing_result = data_processor.process_dataframe(sample_chase_data)
-        
-        # Should handle method failure gracefully
-        assert processed_df is not None
-
-    def test_partial_data_recovery(self, data_processor):
-        """Test recovery from partial data processing failures."""
-        partial_failure_data = pd.DataFrame({
-            'Date': ['01/15/2024', 'invalid_date', '01/17/2024'],
-            'Description': ['STORE1', 'STORE2', 'STORE3'],
-            'Amount': ['-10.00', 'invalid_amount', '-30.00'],
-            'Balance': ['1000.00', '990.00', '960.00']
-        })
-        
-        processed_df, processing_processed_df, processing_result = data_processor.process_dataframe(partial_failure_data)
-        
-        # Should process valid rows even if some fail
-        assert processed_df is not None
-
-    def test_graceful_degradation(self, data_processor):
-        """Test graceful degradation when some features fail."""
-        # Test data that might cause some processing steps to fail
-        degradation_data = pd.DataFrame({
-            'Date': ['01/15/2024', '01/16/2024'],
-            'Description': ['STORE1', 'STORE2'],
-            'Amount': ['-10.00', '-20.00'],
-            'Balance': ['1000.00', '980.00']
-        })
-        
-        processed_df, processing_processed_df, processing_result = data_processor.process_dataframe(degradation_data)
-        
-        # Should provide some level of processing even if not perfect
-        assert processed_df is not None
-
+        assert len(result) == 1
+        assert result['description'].iloc[0] == 'Old Transaction'
+    
     def test_error_message_clarity(self, data_processor):
-        """Test that error messages are clear and actionable."""
+        """Test that error messages are clear and helpful."""
         invalid_data = pd.DataFrame({
-            'wrong_column': ['invalid', 'data']
+            'random_column': ['data'],
+            'another_column': ['more_data']
         })
         
-        processed_df, processing_processed_df, processing_result = data_processor.process_dataframe(invalid_data)
+        with pytest.raises(ValueError) as exc_info:
+            data_processor.process_raw_data(invalid_data)
         
-        if isinstance(result, dict) and 'error' in result:
-            # Error message should be informative
-            assert len(result['error']) > 10  # Should have meaningful message
-            assert isinstance(result['error'], str)
-
-    def test_resource_cleanup(self, data_processor, large_dataset):
-        """Test that resources are properly cleaned up after processing."""
-        import gc
+        error_message = str(exc_info.value)
         
-        # Process large dataset
-        processed_df, processing_processed_df, processing_result = data_processor.process_dataframe(large_dataset)
-        
-        # Force garbage collection
-        gc.collect()
-        
-        # Should complete without memory issues
-        assert processed_df is not None
-
-    def test_invalid_method_parameters(self, data_processor):
-        """Test handling of invalid parameters to individual methods."""
-        # Test map_columns with invalid input
-        try:
-            # data_processor.map_columns( # Method does not exist"invalid_input")
-        except Exception:
-            pass  # Expected to handle gracefully
-        
-        # Test validate_and_clean_data with invalid input
-        try:
-            # data_processor.validate_and_clean_data( # Method does not exist"invalid_input")
-        except Exception:
-            pass  # Expected to handle gracefully
-
-    def test_system_resource_exhaustion_simulation(self, data_processor):
-        """Test behavior when system resources are limited."""
-        # Create data that might stress system resources
-        resource_intensive_data = pd.DataFrame({
-            'Date': ['01/15/2024'] * 1000,
-            'Description': ['VERY LONG DESCRIPTION ' * 100] * 1000,
-            'Amount': ['-10.00'] * 1000,
-            'Balance': ['1000.00'] * 1000
+        # Verify error message contains helpful information
+        assert "Cannot map required columns" in error_message
+        assert "Available columns" in error_message
+        assert "random_column" in error_message or "another_column" in error_message
+    
+    def test_processing_doesnt_modify_input_data(self, data_processor):
+        """Test that processing doesn't modify the original input DataFrame."""
+        original_data = pd.DataFrame({
+            'date': ['2024-01-15'],
+            'description': ['Test Transaction'],
+            'amount': [1000.00]
         })
         
-        processed_df, processing_processed_df, processing_result = data_processor.process_dataframe(resource_intensive_data)
+        # Create a copy to compare against
+        original_copy = original_data.copy()
         
-        # Should handle resource-intensive processing
-        assert processed_df is not None
+        # Process the data
+        result = data_processor.process_raw_data(original_data)
+        
+        # Verify original data wasn't modified
+        pd.testing.assert_frame_equal(original_data, original_copy)
+        
+        # Verify result is different from input
+        assert not original_data.equals(result)
