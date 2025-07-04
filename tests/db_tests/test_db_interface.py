@@ -1366,7 +1366,7 @@ class TestDatabaseInterface:
         
         # Verify complex hierarchy was created atomically
         categories = db_interface.db.get_all_categories()
-        assert len(categories) == 6  # Food, Groceries, Dining, Coffee Shops, Transport, Public Transport, Entertainment
+        assert len(categories) == 7  # Food, Groceries, Dining, Coffee Shops, Transport, Public Transport, Entertainment
         
         # Verify hierarchy relationships
         food_category = next(c for c in categories if c.name == 'Food' and c.parent is None)
