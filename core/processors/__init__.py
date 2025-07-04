@@ -1,51 +1,21 @@
 """
-Data Processor Module
+Data Processors Package
 
-This module provides data transformation and validation capabilities for converting
-raw parsed bank statement data into standardized pandas DataFrames compatible with
-the database interface.
+Simplified data processing package for converting raw bank statement data 
+into standardized DataFrames compatible with db_interface.
 
-Components:
-- DataProcessor: Main processing orchestrator
-- ColumnMapper: Intelligent column mapping engine
-- DataValidator: Data validation and quality checks
-- CategoryPredictor: AI-powered transaction categorization
-- DataCleaner: Data cleaning and standardization
+This package provides a single DataProcessor class that follows the approved
+micro-architecture with 4 simple methods.
 
-Author: Rovo Dev
-Created: 2025-01-02
+Usage:
+    from core.processors import DataProcessor
+    
+    processor = DataProcessor()
+    result = processor.process_raw_data(raw_df)
 """
 
 from .data_processor import DataProcessor
-from .exceptions import (
-    DataProcessorError,
-    ColumnMappingError,
-    ValidationError,
-    CategoryPredictionError,
-)
-from .schemas import (
-    ProcessingConfig,
-    ColumnMappingRule,
-    ValidationResult,
-    ProcessingResult,
-    ErrorReport,
-    ColumnType,
-    ProcessingMode,
-    ValidationSeverity,
-)
 
 __all__ = [
-    "DataProcessor",
-    "DataProcessorError",
-    "ColumnMappingError", 
-    "ValidationError",
-    "CategoryPredictionError",
-    "ProcessingConfig",
-    "ColumnMappingRule",
-    "ValidationResult",
-    "ProcessingResult",
-    "ErrorReport",
-    "ColumnType",
-    "ProcessingMode",
-    "ValidationSeverity",
+    'DataProcessor'
 ]
