@@ -47,7 +47,7 @@ class DataProcessor:
         self.column_mappings = {
             'transaction_date': ['date', 'transaction_date', 'trans_date', 'posting_date', 'value_date', 'transaction date'],
             'description': ['description', 'details', 'transaction_details', 'narration', 'particulars', 'transaction details'],
-            'amount': ['amount', 'transaction_amount', 'debit', 'credit', 'value', 'transaction amount'],
+            'amount': ['amount', 'transaction_amount', 'value', 'transaction amount'],
             'category': ['category', 'type', 'transaction_type'],
             'sub_category': ['sub_category', 'subcategory', 'sub_type']
         }
@@ -195,7 +195,49 @@ class DataProcessor:
         
         # Clean and validate transaction_date column
         try:
-            cleaned_df['transaction_date'] = pd.to_datetime(cleaned_df['transaction_date'], errors='coerce')
+            # Multi-format date parsing with fallback
+            # Handle mixed date formats by parsing each row individually
+            date_formats = [
+                '%Y-%m-%d',      # 2024-01-15 (ISO format)
+                '%d/%m/%Y',      # 15/01/2024 (DD/MM/YYYY)
+                '%m-%d-%Y',      # 01-15-2024 (MM-DD-YYYY)
+                '%d-%b-%Y',      # 15-Jan-2024 (DD-Mon-YYYY)
+                '%Y/%m/%d',      # 2024/01/15 (YYYY/MM/DD)
+                '%d-%m-%Y',      # 15-01-2024 (DD-MM-YYYY)
+            ]
+            
+            # Initialize result series
+            parsed_dates = pd.Series([pd.NaT] * len(cleaned_df), index=cleaned_df.index)
+            
+            # Parse each date string individually
+            for idx, date_str in cleaned_df['transaction_date'].items():
+                if pd.isna(date_str):
+                    continue
+                    
+                date_str = str(date_str).strip()
+                parsed_date = pd.NaT
+                
+                # Try each format
+                for date_format in date_formats:
+                    try:
+                        parsed_date = pd.to_datetime(date_str, format=date_format)
+                        break
+                    except:
+                        continue
+                
+                # If explicit formats failed, try auto-detection
+                if pd.isna(parsed_date):
+                    try:
+                        parsed_date = pd.to_datetime(date_str, dayfirst=True, errors='coerce')
+                    except:
+                        try:
+                            parsed_date = pd.to_datetime(date_str, dayfirst=False, errors='coerce')
+                        except:
+                            pass
+                
+                parsed_dates.iloc[idx] = parsed_date
+            
+            cleaned_df['transaction_date'] = parsed_dates
             # Remove rows with invalid dates
             cleaned_df = cleaned_df.dropna(subset=['transaction_date'])
         except Exception as e:
@@ -206,9 +248,16 @@ class DataProcessor:
             # Handle string amounts (remove currency symbols, commas)
             if cleaned_df['amount'].dtype == 'object':
                 cleaned_df['amount'] = cleaned_df['amount'].astype(str)
-                # Remove currency symbols and commas
-                cleaned_df['amount'] = cleaned_df['amount'].str.replace(r'[Rs,$,\s]', '', regex=True)
+                # Remove currency symbols and commas (including international symbols)
+                # First remove common ASCII currency symbols: Rs, $, commas, spaces
+                cleaned_df['amount'] = cleaned_df['amount'].str.replace(r'[Rs$,\s]', '', regex=True)
+                # Remove Unicode currency symbols using escape sequences
+                cleaned_df['amount'] = cleaned_df['amount'].str.replace('\u20b9', '', regex=False)  # Indian Rupee
+                cleaned_df['amount'] = cleaned_df['amount'].str.replace('\u20ac', '', regex=False)  # Euro
+                cleaned_df['amount'] = cleaned_df['amount'].str.replace('\u00a3', '', regex=False)  # Pound
+                # Remove any remaining commas and spaces
                 cleaned_df['amount'] = cleaned_df['amount'].str.replace(',', '')
+                cleaned_df['amount'] = cleaned_df['amount'].str.strip()
             
             cleaned_df['amount'] = pd.to_numeric(cleaned_df['amount'], errors='coerce')
             # Remove rows with invalid amounts
