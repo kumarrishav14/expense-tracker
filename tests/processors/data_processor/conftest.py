@@ -185,3 +185,37 @@ def assert_processing_summary(summary: Dict, original_rows: int, expected_proces
     assert summary['processed_rows'] == expected_processed
     assert summary['rows_removed'] == original_rows - expected_processed
     assert summary['processing_success'] is True
+
+
+@pytest.fixture
+def mock_ai_categorization(mocker):
+    """
+    Mocks the AI categorization call to return predictable categories.
+    """
+    def mock_categorize(description: str, categories: list) -> str:
+        description = description.lower()
+        if "medical" in description or "store" in description:
+            return "Healthcare"
+        if "swiggy" in description or "restaurant" in description or "zomato" in description:
+            return "Food & Dining"
+        if "amazon" in description or "flipkart" in description:
+            return "Shopping"
+        if "salary" in description:
+            return "Salary"
+        if "atm" in description:
+            return "ATM"
+        if "bill" in description:
+            return "Bills & Utilities"
+        if "uber" in description or "metro" in description:
+            return "Transportation"
+        if "netflix" in description:
+            return "Entertainment"
+        if "transfer" in description:
+            return "Transfer"
+        return "Other"
+
+    mocker.patch(
+        'core.processors.data_processor.categorize_expense',
+        side_effect=mock_categorize,
+        create=True
+    )
