@@ -13,6 +13,8 @@ import pandas as pd
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 import re
+from ai.ollama.client import OllamaClient
+from ai.ollama.factory import get_ollama_client, is_ollama_available
 
 
 class DataProcessor:
@@ -36,8 +38,13 @@ class DataProcessor:
     Note: created_at and updated_at are handled internally by db_interface
     """
     
-    def __init__(self):
-        """Initialize the data processor with standard column mappings."""
+    def __init__(self, ollama_client: Optional[OllamaClient] = None):
+        """
+        Initialize the data processor.
+
+        Args:
+            ollama_client: An optional OllamaClient instance for testing.
+        """
         # Standard column names expected by db_interface (from architecture spec)
         self.db_interface_columns = [
             'description', 'amount', 'transaction_date', 'category', 'sub_category'
@@ -65,6 +72,14 @@ class DataProcessor:
             'Salary': ['salary', 'wages', 'income'],
             'Other': []  # Default category
         }
+
+        # AI Client Initialization
+        if ollama_client:
+            self.ollama_client = ollama_client
+            self.ollama_enabled = self.ollama_client.test_connection()
+        else:
+            self.ollama_enabled = is_ollama_available()
+            self.ollama_client = get_ollama_client() if self.ollama_enabled else None
 
     def process_raw_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -235,7 +250,7 @@ class DataProcessor:
                         except:
                             pass
                 
-                parsed_dates.iloc[idx] = parsed_date
+                parsed_dates.at[idx] = parsed_date
             
             cleaned_df['transaction_date'] = parsed_dates
             # Remove rows with invalid dates
@@ -280,13 +295,12 @@ class DataProcessor:
         
         return cleaned_df
 
-    #TODO: Replace with actual AI categorization logic once the AI backend is up.
     def add_ai_categories(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Simple rule-based categorization for transactions.
+        Categorize transactions using AI, with a rule-based fallback.
         
-        Uses keyword matching to assign categories to transactions based on
-        description text. This is a simplified version of AI categorization.
+        Uses the Ollama client to assign categories. If the AI service is
+        unavailable or disabled, it falls back to simple keyword matching.
         
         Args:
             df: Cleaned DataFrame with valid transactions
@@ -301,33 +315,47 @@ class DataProcessor:
             categorized_df['category'] = None
         if 'sub_category' not in categorized_df.columns:
             categorized_df['sub_category'] = None
-        
-        # Apply rule-based categorization
-        for idx, row in categorized_df.iterrows():
-            # Skip if category is already assigned
-            if pd.notna(row['category']) and row['category'].strip():
-                continue
-            
-            description = str(row['description']).lower()
-            assigned_category = 'Other'  # Default category
-            
-            # Check each category rule
-            for category, keywords in self.category_rules.items():
-                if category == 'Other':
+
+        available_categories = list(self.category_rules.keys())
+
+        # Use AI for categorization if available
+        if self.ollama_enabled and self.ollama_client:
+            for idx, row in categorized_df.iterrows():
+                if pd.notna(row['category']) and row['category'].strip():
                     continue
                 
-                # Check if any keyword matches the description
-                for keyword in keywords:
-                    if keyword.lower() in description:
-                        assigned_category = category
+                description = str(row['description'])
+                # Get AI-powered category
+                predicted_category = self.ollama_client.categorize_transaction(
+                    transaction_description=description,
+                    available_categories=available_categories
+                )
+                categorized_df.at[idx, 'category'] = predicted_category
+        else:
+            # Fallback to rule-based categorization
+            for idx, row in categorized_df.iterrows():
+                if pd.notna(row['category']) and row['category'].strip():
+                    continue
+                
+                description = str(row['description']).lower()
+                assigned_category = 'Other'  # Default category
+                
+                for category, keywords in self.category_rules.items():
+                    if category == 'Other':
+                        continue
+                    
+                    for keyword in keywords:
+                        if keyword.lower() in description:
+                            assigned_category = category
+                            break
+                    
+                    if assigned_category != 'Other':
                         break
                 
-                if assigned_category != 'Other':
-                    break
-            
-            categorized_df.at[idx, 'category'] = assigned_category
-            
-            # Simple sub-category assignment based on amount
+                categorized_df.at[idx, 'category'] = assigned_category
+
+        # Simple sub-category assignment (can be enhanced later)
+        for idx, row in categorized_df.iterrows():
             amount = abs(float(row['amount']))
             if amount > 10000:
                 categorized_df.at[idx, 'sub_category'] = 'Large Transaction'

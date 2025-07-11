@@ -1,26 +1,33 @@
 """
 Ollama Backend API Client
 
-A simple client for interacting with Ollama server using curl commands.
+A simple client for interacting with Ollama server using requests.
 Provides basic functionality for AI tasks in the expense tracking application.
 """
 
 import json
-import subprocess
+import requests
 from typing import Dict, List, Optional, Any
-from dataclasses import dataclass
+from .config import OllamaConfig
 
 
-@dataclass
-class OllamaConfig:
-    """Configuration for Ollama client."""
-    base_url: str = "http://localhost:11434"
-    model: str = "llama2"
-    timeout: int = 30
+class OllamaConnectionError(Exception):
+    """Custom exception for connection errors to the Ollama server."""
+    pass
+
+
+class OllamaTimeoutError(Exception):
+    """Custom exception for timeout errors."""
+    pass
+
+
+class OllamaAPIError(Exception):
+    """Custom exception for Ollama API errors."""
+    pass
 
 
 class OllamaClient:
-    """Simple Ollama client using curl for API calls."""
+    """Simple Ollama client using requests for API calls."""
     
     def __init__(self, config: OllamaConfig):
         """
@@ -32,10 +39,10 @@ class OllamaClient:
         self.config = config
         self.base_url = config.base_url.rstrip('/')
     
-    def _execute_curl(self, endpoint: str, method: str = "GET", 
-                     data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _execute_request(self, endpoint: str, method: str = "GET", 
+                         data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Execute curl command and return parsed JSON response.
+        Execute HTTP request and return parsed JSON response.
         
         Args:
             endpoint: API endpoint (e.g., "/api/tags")
@@ -46,35 +53,33 @@ class OllamaClient:
             Parsed JSON response
             
         Raises:
-            Exception: If curl command fails or returns invalid JSON
+            OllamaConnectionError: If a connection error occurs.
+            OllamaTimeoutError: If the request times out.
+            OllamaAPIError: If the API returns an error.
         """
         url = f"{self.base_url}{endpoint}"
-        cmd = ["curl", "-s", "--connect-timeout", str(self.config.timeout)]
-        
-        if method == "POST":
-            cmd.extend(["-X", "POST", "-H", "Content-Type: application/json"])
-            if data:
-                cmd.extend(["-d", json.dumps(data)])
-        
-        cmd.append(url)
         
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=self.config.timeout)
+            if method == "POST":
+                response = requests.post(url, json=data, timeout=self.config.timeout)
+            else:
+                response = requests.get(url, timeout=self.config.timeout)
             
-            if result.returncode != 0:
-                raise Exception(f"Curl command failed: {result.stderr}")
+            response.raise_for_status()
             
-            if not result.stdout.strip():
-                raise Exception("Empty response from server")
+            if not response.text.strip():
+                raise OllamaAPIError("Empty response from server")
                 
-            return json.loads(result.stdout)
+            return response.json()
             
-        except subprocess.TimeoutExpired:
-            raise Exception(f"Request timed out after {self.config.timeout} seconds")
+        except requests.exceptions.ConnectionError as e:
+            raise OllamaConnectionError(f"Connection to {self.base_url} failed: {e}") from e
+        except requests.exceptions.Timeout as e:
+            raise OllamaTimeoutError(f"Request timed out after {self.config.timeout} seconds") from e
+        except requests.exceptions.HTTPError as e:
+            raise OllamaAPIError(f"HTTP error occurred: {e.response.status_code} - {e.response.text}") from e
         except json.JSONDecodeError as e:
-            raise Exception(f"Invalid JSON response: {e}")
-        except Exception as e:
-            raise Exception(f"Request failed: {str(e)}")
+            raise OllamaAPIError(f"Invalid JSON response: {e}") from e
     
     def test_connection(self) -> bool:
         """
@@ -84,9 +89,9 @@ class OllamaClient:
             True if server is accessible, False otherwise
         """
         try:
-            response = self._execute_curl("/api/tags")
+            response = self._execute_request("/api/tags")
             return "models" in response
-        except Exception:
+        except (OllamaConnectionError, OllamaTimeoutError, OllamaAPIError):
             return False
     
     def list_models(self) -> List[str]:
@@ -97,14 +102,14 @@ class OllamaClient:
             List of model names
             
         Raises:
-            Exception: If unable to fetch models
+            OllamaAPIError: If unable to fetch models
         """
         try:
-            response = self._execute_curl("/api/tags")
+            response = self._execute_request("/api/tags")
             models = response.get("models", [])
             return [model.get("name", "") for model in models if model.get("name")]
-        except Exception as e:
-            raise Exception(f"Failed to fetch models: {str(e)}")
+        except (OllamaConnectionError, OllamaTimeoutError, OllamaAPIError) as e:
+            raise OllamaAPIError(f"Failed to fetch models: {str(e)}") from e
     
     def check_model_exists(self, model_name: Optional[str] = None) -> bool:
         """
@@ -120,7 +125,7 @@ class OllamaClient:
             model_to_check = model_name or self.config.model
             available_models = self.list_models()
             return model_to_check in available_models
-        except Exception:
+        except OllamaAPIError:
             return False
     
     def generate_completion(self, prompt: str, model: Optional[str] = None, 
@@ -137,7 +142,7 @@ class OllamaClient:
             Generated text response
             
         Raises:
-            Exception: If generation fails
+            OllamaAPIError: If generation fails
         """
         model_name = model or self.config.model
         
@@ -148,10 +153,10 @@ class OllamaClient:
         }
         
         try:
-            response = self._execute_curl("/api/generate", method="POST", data=data)
+            response = self._execute_request("/api/generate", method="POST", data=data)
             return response.get("response", "")
-        except Exception as e:
-            raise Exception(f"Failed to generate completion: {str(e)}")
+        except (OllamaConnectionError, OllamaTimeoutError, OllamaAPIError) as e:
+            raise OllamaAPIError(f"Failed to generate completion: {str(e)}") from e
     
     def categorize_transaction(self, transaction_description: str, 
                              available_categories: List[str]) -> str:
@@ -166,19 +171,17 @@ class OllamaClient:
             Suggested category name
             
         Raises:
-            Exception: If categorization fails
+            OllamaAPIError: If categorization fails
         """
         categories_str = ", ".join(available_categories)
         
-        prompt = f"""
-You are an expense categorization assistant. Given a transaction description, 
-choose the most appropriate category from the available options.
-
-Transaction: {transaction_description}
-Available categories: {categories_str}
-
-Respond with only the category name, nothing else.
-"""
+        with open("prompts/expense_categorization.txt", "r") as f:
+            prompt_template = f.read()
+        
+        prompt = prompt_template.format(
+            transaction_description=transaction_description,
+            categories_str=categories_str
+        )
         
         try:
             response = self.generate_completion(prompt)
@@ -196,8 +199,9 @@ Respond with only the category name, nothing else.
             # If no match found, return first category as fallback
             return available_categories[0] if available_categories else "Other"
             
-        except Exception as e:
-            raise Exception(f"Failed to categorize transaction: {str(e)}")
+        except OllamaAPIError as e:
+            # If AI categorization fails, return a default category
+            return available_categories[0] if available_categories else "Other"
     
     def get_server_info(self) -> Dict[str, Any]:
         """
@@ -215,7 +219,7 @@ Respond with only the category name, nothing else.
                 "configured_model": self.config.model,
                 "model_exists": self.check_model_exists()
             }
-        except Exception as e:
+        except OllamaAPIError as e:
             return {
                 "server_url": self.base_url,
                 "is_connected": False,

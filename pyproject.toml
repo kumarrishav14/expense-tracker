@@ -11,4 +11,5 @@ dependencies = [
     "pytz>=2025.2",
     "sqlalchemy>=2.0.41",
     "streamlit>=1.46.1",
+    "requests>=2.32.3",
 ]

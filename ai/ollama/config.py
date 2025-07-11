@@ -12,6 +12,14 @@ import json
 
 
 @dataclass
+class OllamaConfig:
+    """Configuration for Ollama client."""
+    base_url: str = "http://localhost:11434"
+    model: str = "llama2"
+    timeout: int = 30
+
+
+@dataclass
 class OllamaSettings:
     """Ollama settings that can be configured in Streamlit app."""
     base_url: str = "http://localhost:11434"
@@ -99,8 +107,6 @@ class OllamaConfigManager:
         Returns:
             OllamaConfig instance
         """
-        from .client import OllamaConfig
-        
         settings = self.load_settings()
         return OllamaConfig(
             base_url=settings.base_url,

@@ -115,6 +115,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pytest" },
     { name = "pytz" },
+    { name = "requests" },
     { name = "sqlalchemy" },
     { name = "streamlit" },
 ]
@@ -125,6 +126,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.11.7" },
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytz", specifier = ">=2025.2" },
+    { name = "requests", specifier = ">=2.32.3" },
     { name = "sqlalchemy", specifier = ">=2.0.41" },
     { name = "streamlit", specifier = ">=1.46.1" },
 ]
