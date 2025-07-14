@@ -43,7 +43,7 @@ class OllamaConfigManager:
     
     def load_settings(self) -> OllamaSettings:
         """
-        Load settings from file or environment variables.
+        Load settings from file or create a default config if it doesn't exist.
         
         Returns:
             OllamaSettings instance
@@ -51,25 +51,24 @@ class OllamaConfigManager:
         if self._settings is not None:
             return self._settings
         
-        # Try to load from file first
-        if os.path.exists(self.config_file):
-            try:
-                with open(self.config_file, 'r') as f:
-                    data = json.load(f)
-                    self._settings = OllamaSettings(**data)
-                    return self._settings
-            except Exception:
-                pass  # Fall back to defaults/env vars
-        
-        # Load from environment variables or use defaults
-        self._settings = OllamaSettings(
-            base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
-            model=os.getenv("OLLAMA_MODEL", "llama2"),
-            timeout=int(os.getenv("OLLAMA_TIMEOUT", "30")),
-            enabled=os.getenv("OLLAMA_ENABLED", "true").lower() == "true"
-        )
-        
-        return self._settings
+        if not os.path.exists(self.config_file):
+            # Create default settings and save them
+            default_settings = OllamaSettings()
+            self.save_settings(default_settings)
+            self._settings = default_settings
+            return self._settings
+
+        try:
+            with open(self.config_file, 'r') as f:
+                data = json.load(f)
+                self._settings = OllamaSettings(**data)
+                return self._settings
+        except (Exception, json.JSONDecodeError):
+            # If file is corrupted or invalid, create a default one
+            default_settings = OllamaSettings()
+            self.save_settings(default_settings)
+            self._settings = default_settings
+            return self._settings
     
     def save_settings(self, settings: OllamaSettings) -> None:
         """

@@ -22,7 +22,7 @@ class CSVParser:
     making it easy to load financial data from various sources.
     """
     
-    def __init__(self, file_source: Union[str, IO], encoding: str = 'utf-8'):
+    def __init__(self, file_source: Union[str, io.BytesIO], encoding: str = 'utf-8'):
         """
         Initialize the parser with the path to the CSV file.
         
@@ -73,7 +73,7 @@ class CSVParser:
             # Catch other potential parsing errors
             raise ValueError(f"Failed to parse CSV file: {e}")
 
-def parse_csv_file(file_source: Union[str, IO]) -> pd.DataFrame:
+def parse_csv_file(file_source: Union[str, io.BytesIO]) -> pd.DataFrame:
     """
     Convenience function to parse a CSV file directly.
     
