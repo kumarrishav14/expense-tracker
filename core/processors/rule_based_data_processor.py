@@ -40,12 +40,9 @@ class DataProcessor:
     
     def __init__(self, ollama_client: Optional[OllamaClient] = None):
         """
-        Initialize the data processor.
-
-        Args:
-            ollama_client: An optional OllamaClient instance for testing.
+        Initializes the rule-based data processor.
         """
-        # Standard column names expected by db_interface (from architecture spec)
+        # Standard column names expected by db_interface
         self.db_interface_columns = [
             'description', 'amount', 'transaction_date', 'category', 'sub_category'
         ]
@@ -59,7 +56,7 @@ class DataProcessor:
             'sub_category': ['sub_category', 'subcategory', 'sub_type']
         }
         
-        # Simple category rules for basic AI categorization
+        # Simple category rules for basic categorization
         self.category_rules = {
             'Food & Dining': ['restaurant', 'food', 'cafe', 'dining', 'swiggy', 'zomato', 'uber eats'],
             'Transportation': ['uber', 'ola', 'metro', 'bus', 'taxi', 'fuel', 'petrol', 'diesel'],
@@ -72,14 +69,6 @@ class DataProcessor:
             'Salary': ['salary', 'wages', 'income'],
             'Other': []  # Default category
         }
-
-        # AI Client Initialization
-        if ollama_client:
-            self.ollama_client = ollama_client
-            self.ollama_enabled = self.ollama_client.test_connection()
-        else:
-            self.ollama_enabled = is_ollama_available()
-            self.ollama_client = get_ollama_client() if self.ollama_enabled else None
 
     def process_raw_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """

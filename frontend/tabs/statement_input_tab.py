@@ -11,7 +11,7 @@ import io
 
 from core.parsers.csv_parser import parse_csv_file
 from core.parsers.pdf_parser import is_pdf_encrypted, parse_pdf
-from core.processors.data_processor import DataProcessor
+from core.processors import AIDataProcessor
 from core.database.db_interface import DatabaseInterface
 
 def render():
@@ -49,7 +49,7 @@ def render():
                     else: # CSV
                         raw_df = parse_csv_file(file_stream)
                     
-                    processor = DataProcessor()
+                    processor = AIDataProcessor()
                     processed_df = processor.process_raw_data(raw_df)
                     
                     st.session_state.processed_df = processed_df

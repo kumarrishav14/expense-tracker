@@ -1,21 +1,20 @@
 """
 Data Processors Package
 
-Simplified data processing package for converting raw bank statement data 
-into standardized DataFrames compatible with db_interface.
+This package provides multiple data processing strategies that conform to the
+AbstractDataProcessor contract.
 
-This package provides a single DataProcessor class that follows the approved
-micro-architecture with 4 simple methods.
-
-Usage:
-    from core.processors import DataProcessor
-    
-    processor = DataProcessor()
-    result = processor.process_raw_data(raw_df)
+Available Strategies:
+- AIDataProcessor: An advanced processor that uses an LLM for structuring and categorization.
+- RuleBasedDataProcessor: A simpler processor that uses hard-coded rules.
 """
 
-from .data_processor import DataProcessor
+from .abstract_processor import AbstractDataProcessor
+from .ai_data_processor import AIDataProcessor
+from .rule_based_data_processor import RuleBasedDataProcessor
 
 __all__ = [
-    'DataProcessor'
+    'AbstractDataProcessor',
+    'AIDataProcessor',
+    'RuleBasedDataProcessor'
 ]
