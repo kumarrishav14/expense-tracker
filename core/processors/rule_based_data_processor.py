@@ -1,62 +1,36 @@
 """
-Simplified Data Processor Implementation
+Rule-Based Data Processor with AI Fallback
 
-Single-class implementation that converts raw bank statement data into 
-standardized DataFrames compatible with db_interface. Follows the approved
-micro-architecture with 4 simple methods.
-
-This replaces the over-engineered multi-component system with a focused,
-maintainable solution appropriate for a personal expense tracking app.
+This module provides a concrete implementation of the AbstractDataProcessor.
+It attempts to use an AI for categorization first, and falls back to a simple
+rule-based approach if the AI service is unavailable.
 """
 
 import pandas as pd
-from datetime import datetime
-from typing import Dict, List, Optional, Tuple
-import re
+from typing import Optional
+
+from .abstract_processor import AbstractDataProcessor
 from ai.ollama.client import OllamaClient
 from ai.ollama.factory import get_ollama_client, is_ollama_available
 
-
-class DataProcessor:
+class RuleBasedDataProcessor(AbstractDataProcessor):
     """
-    Simplified data processor for converting raw bank statement data 
-    into standardized DataFrames compatible with db_interface.
-    
-    This class handles:
-    - Intelligent column mapping from raw data to standard schema
-    - Basic data validation and cleaning
-    - Simple AI-powered categorization
-    - Format standardization for database persistence
-    
-    Output DataFrame matches db_interface expectations:
-    - description: str (transaction description)
-    - amount: float (transaction amount) 
-    - transaction_date: datetime (when transaction occurred)
-    - category: str (main category name)
-    - sub_category: str (sub-category name)
-    
-    Note: created_at and updated_at are handled internally by db_interface
+    A processor that uses AI for categorization with a rule-based fallback.
+    It adheres to the contract defined by AbstractDataProcessor.
     """
     
     def __init__(self, ollama_client: Optional[OllamaClient] = None):
         """
-        Initializes the rule-based data processor.
+        Initializes the processor, checking for AI service availability.
         """
-        # Standard column names expected by db_interface
-        self.db_interface_columns = [
-            'description', 'amount', 'transaction_date', 'category', 'sub_category'
-        ]
-        
-        # Simple column mapping patterns for common bank statement formats
+        # Simple column mapping patterns
         self.column_mappings = {
             'transaction_date': ['date', 'transaction_date', 'trans_date', 'posting_date', 'value_date', 'transaction date'],
             'description': ['description', 'details', 'transaction_details', 'narration', 'particulars', 'transaction details'],
             'amount': ['amount', 'transaction_amount', 'value', 'transaction amount'],
-            'category': ['category', 'type', 'transaction_type'],
-            'sub_category': ['sub_category', 'subcategory', 'sub_type']
         }
         
-        # Simple category rules for basic categorization
+        # Simple category rules for fallback categorization
         self.category_rules = {
             'Food & Dining': ['restaurant', 'food', 'cafe', 'dining', 'swiggy', 'zomato', 'uber eats'],
             'Transportation': ['uber', 'ola', 'metro', 'bus', 'taxi', 'fuel', 'petrol', 'diesel'],
@@ -67,216 +41,90 @@ class DataProcessor:
             'Transfer': ['transfer', 'neft', 'rtgs', 'imps', 'upi'],
             'ATM': ['atm', 'cash withdrawal'],
             'Salary': ['salary', 'wages', 'income'],
-            'Other': []  # Default category
+            'Other': []
         }
+
+        # AI Client Initialization
+        if ollama_client:
+            self.ollama_client = ollama_client
+            self.ollama_enabled = self.ollama_client.test_connection()
+        else:
+            self.ollama_enabled = is_ollama_available()
+            self.ollama_client = get_ollama_client() if self.ollama_enabled else None
 
     def process_raw_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Main processing method that orchestrates the entire data transformation pipeline.
-        
-        Args:
-            df: Raw pandas DataFrame from file parsers with any column structure
-            
-        Returns:
-            Standardized DataFrame compatible with db_interface
-            
-        Raises:
-            ValueError: If input DataFrame is empty or has no valid columns
+        Main processing method that orchestrates the data transformation pipeline.
+        The @enforce_output_schema decorator is inherited from the parent class.
         """
         if df.empty:
             raise ValueError("Input DataFrame is empty")
         
-        # Step 1: Map columns to standard schema
-        mapped_df = self.map_columns(df)
+        mapped_df = self._map_columns(df)
+        cleaned_df = self._validate_and_clean_data(mapped_df)
+        categorized_df = self._add_categories(cleaned_df)
         
-        # Step 2: Validate and clean the data
-        cleaned_df = self.validate_and_clean_data(mapped_df)
-        
-        # Step 3: Add AI-powered categories
-        categorized_df = self.add_ai_categories(cleaned_df)
-        
-        # Step 4: Ensure only db_interface expected columns are present
-        # Note: created_at and updated_at are handled internally by db_interface
-        final_df = categorized_df[self.db_interface_columns].copy()
-        
-        return final_df
+        return categorized_df
 
-    def map_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _map_columns(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Simple column mapping from raw DataFrame to standard schema.
-        
-        Uses fuzzy string matching to map common bank statement column names
-        to the standard schema expected by db_interface.
-        
-        Args:
-            df: Raw DataFrame with any column names
-            
-        Returns:
-            DataFrame with columns mapped to standard schema
-            
-        Raises:
-            ValueError: If required columns (transaction_date, description, amount) cannot be mapped
+        Maps raw DataFrame columns to the standard schema.
         """
         mapped_df = df.copy()
         column_map = {}
         
-        # Convert column names to lowercase for case-insensitive matching
-        df_columns_lower = [col.lower().strip() for col in df.columns]
+        df_columns_lower = [str(col).lower().strip() for col in df.columns]
         
-        # Map each standard column to the best matching raw column
         for standard_col, possible_names in self.column_mappings.items():
-            best_match = None
-            
-            # Look for exact matches first
             for possible_name in possible_names:
                 if possible_name.lower() in df_columns_lower:
                     original_col = df.columns[df_columns_lower.index(possible_name.lower())]
-                    best_match = original_col
+                    column_map[original_col] = standard_col
                     break
-            
-            # If exact match found, add to mapping
-            if best_match:
-                column_map[best_match] = standard_col
         
-        # Rename columns according to mapping
         mapped_df = mapped_df.rename(columns=column_map)
         
-        # Handle debit/credit columns - combine them into amount
         if 'amount' not in mapped_df.columns:
-            debit_col = None
-            credit_col = None
-            
-            # Look for debit/credit columns
+            debit_col, credit_col = None, None
             for col in mapped_df.columns:
-                if col.lower() in ['debit', 'debit_amount']:
+                if str(col).lower() in ['debit', 'debit_amount']:
                     debit_col = col
-                elif col.lower() in ['credit', 'credit_amount']:
+                elif str(col).lower() in ['credit', 'credit_amount']:
                     credit_col = col
             
-            if debit_col is not None and credit_col is not None:
-                # Combine debit and credit: credit is positive, debit is negative
-                mapped_df['amount'] = mapped_df[credit_col].fillna(0) - mapped_df[debit_col].fillna(0)
-                # Drop the original debit/credit columns
+            if debit_col and credit_col:
+                mapped_df['amount'] = pd.to_numeric(mapped_df[credit_col], errors='coerce').fillna(0) - \
+                                      pd.to_numeric(mapped_df[debit_col], errors='coerce').fillna(0)
                 mapped_df = mapped_df.drop(columns=[debit_col, credit_col])
         
-        # Check if we have the required columns
-        mapped_standard_cols = set(mapped_df.columns) & set(self.column_mappings.keys())
         required_cols = {'transaction_date', 'description', 'amount'}
-        missing_required = required_cols - mapped_standard_cols
+        if not required_cols.issubset(mapped_df.columns):
+            missing = required_cols - set(mapped_df.columns)
+            raise ValueError(f"Cannot map required columns: {missing}")
         
-        if missing_required:
-            raise ValueError(f"Cannot map required columns: {missing_required}. "
-                           f"Available columns: {list(df.columns)}")
-        
-        # Add missing optional columns with default values
-        for col in self.db_interface_columns:
+        for col in ['category', 'sub_category']:
             if col not in mapped_df.columns:
-                if col in ['category', 'sub_category']:
-                    mapped_df[col] = None
+                mapped_df[col] = ""
         
         return mapped_df
 
-    def validate_and_clean_data(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _validate_and_clean_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Basic data validation and cleaning operations.
-        
-        Performs simple data quality checks and standardizes formats:
-        - Converts date columns to datetime
-        - Ensures amount is numeric
-        - Cleans description text
-        - Removes invalid rows
-        
-        Args:
-            df: DataFrame with mapped columns
-            
-        Returns:
-            Cleaned and validated DataFrame
-            
-        Raises:
-            ValueError: If data cleaning fails or results in empty DataFrame
+        Performs basic data validation and cleaning.
         """
         cleaned_df = df.copy()
         
-        # Clean and validate transaction_date column
-        try:
-            # Multi-format date parsing with fallback
-            # Handle mixed date formats by parsing each row individually
-            date_formats = [
-                '%Y-%m-%d',      # 2024-01-15 (ISO format)
-                '%d/%m/%Y',      # 15/01/2024 (DD/MM/YYYY)
-                '%m-%d-%Y',      # 01-15-2024 (MM-DD-YYYY)
-                '%d-%b-%Y',      # 15-Jan-2024 (DD-Mon-YYYY)
-                '%Y/%m/%d',      # 2024/01/15 (YYYY/MM/DD)
-                '%d-%m-%Y',      # 15-01-2024 (DD-MM-YYYY)
-            ]
-            
-            # Initialize result series
-            parsed_dates = pd.Series([pd.NaT] * len(cleaned_df), index=cleaned_df.index)
-            
-            # Parse each date string individually
-            for idx, date_str in cleaned_df['transaction_date'].items():
-                if pd.isna(date_str):
-                    continue
-                    
-                date_str = str(date_str).strip()
-                parsed_date = pd.NaT
-                
-                # Try each format
-                for date_format in date_formats:
-                    try:
-                        parsed_date = pd.to_datetime(date_str, format=date_format)
-                        break
-                    except:
-                        continue
-                
-                # If explicit formats failed, try auto-detection
-                if pd.isna(parsed_date):
-                    try:
-                        parsed_date = pd.to_datetime(date_str, dayfirst=True, errors='coerce')
-                    except:
-                        try:
-                            parsed_date = pd.to_datetime(date_str, dayfirst=False, errors='coerce')
-                        except:
-                            pass
-                
-                parsed_dates.at[idx] = parsed_date
-            
-            cleaned_df['transaction_date'] = parsed_dates
-            # Remove rows with invalid dates
-            cleaned_df = cleaned_df.dropna(subset=['transaction_date'])
-        except Exception as e:
-            raise ValueError(f"Failed to parse transaction_date column: {e}")
+        cleaned_df['transaction_date'] = pd.to_datetime(cleaned_df['transaction_date'], errors='coerce')
+        cleaned_df = cleaned_df.dropna(subset=['transaction_date'])
         
-        # Clean and validate amount column
-        try:
-            # Handle string amounts (remove currency symbols, commas)
-            if cleaned_df['amount'].dtype == 'object':
-                cleaned_df['amount'] = cleaned_df['amount'].astype(str)
-                # Remove currency symbols and commas (including international symbols)
-                # First remove common ASCII currency symbols: Rs, $, commas, spaces
-                cleaned_df['amount'] = cleaned_df['amount'].str.replace(r'[Rs$,\s]', '', regex=True)
-                # Remove Unicode currency symbols using escape sequences
-                cleaned_df['amount'] = cleaned_df['amount'].str.replace('\u20b9', '', regex=False)  # Indian Rupee
-                cleaned_df['amount'] = cleaned_df['amount'].str.replace('\u20ac', '', regex=False)  # Euro
-                cleaned_df['amount'] = cleaned_df['amount'].str.replace('\u00a3', '', regex=False)  # Pound
-                # Remove any remaining commas and spaces
-                cleaned_df['amount'] = cleaned_df['amount'].str.replace(',', '')
-                cleaned_df['amount'] = cleaned_df['amount'].str.strip()
-            
-            cleaned_df['amount'] = pd.to_numeric(cleaned_df['amount'], errors='coerce')
-            # Remove rows with invalid amounts
-            cleaned_df = cleaned_df.dropna(subset=['amount'])
-        except Exception as e:
-            raise ValueError(f"Failed to parse amount column: {e}")
+        if cleaned_df['amount'].dtype == 'object':
+            cleaned_df['amount'] = cleaned_df['amount'].astype(str).str.replace(r'[Rs$,\s]', '', regex=True)
+        cleaned_df['amount'] = pd.to_numeric(cleaned_df['amount'], errors='coerce')
+        cleaned_df = cleaned_df.dropna(subset=['amount'])
         
-        # Clean description column
-        if 'description' in cleaned_df.columns:
-            cleaned_df['description'] = cleaned_df['description'].astype(str)
-            cleaned_df['description'] = cleaned_df['description'].str.strip()
-            # Remove rows with empty descriptions
-            cleaned_df = cleaned_df[cleaned_df['description'].str.len() > 0]
+        cleaned_df['description'] = cleaned_df['description'].astype(str).str.strip()
+        cleaned_df = cleaned_df[cleaned_df['description'].str.len() > 0]
         
-        # Remove duplicate transactions (same date, amount, description)
         cleaned_df = cleaned_df.drop_duplicates(subset=['transaction_date', 'amount', 'description'])
         
         if cleaned_df.empty:
@@ -284,92 +132,39 @@ class DataProcessor:
         
         return cleaned_df
 
-    def add_ai_categories(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _add_categories(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Categorize transactions using AI, with a rule-based fallback.
-        
-        Uses the Ollama client to assign categories. If the AI service is
-        unavailable or disabled, it falls back to simple keyword matching.
-        
-        Args:
-            df: Cleaned DataFrame with valid transactions
-            
-        Returns:
-            DataFrame with category and sub_category columns populated
+        Categorizes transactions using AI, with a rule-based fallback.
         """
         categorized_df = df.copy()
         
-        # Initialize category columns if they don't exist
         if 'category' not in categorized_df.columns:
-            categorized_df['category'] = None
+            categorized_df['category'] = ""
         if 'sub_category' not in categorized_df.columns:
-            categorized_df['sub_category'] = None
+            categorized_df['sub_category'] = ""
 
         available_categories = list(self.category_rules.keys())
 
-        # Use AI for categorization if available
         if self.ollama_enabled and self.ollama_client:
             for idx, row in categorized_df.iterrows():
                 if pd.notna(row['category']) and row['category'].strip():
                     continue
-                
                 description = str(row['description'])
-                # Get AI-powered category
                 predicted_category = self.ollama_client.categorize_transaction(
                     transaction_description=description,
                     available_categories=available_categories
                 )
                 categorized_df.at[idx, 'category'] = predicted_category
         else:
-            # Fallback to rule-based categorization
             for idx, row in categorized_df.iterrows():
                 if pd.notna(row['category']) and row['category'].strip():
                     continue
-                
                 description = str(row['description']).lower()
-                assigned_category = 'Other'  # Default category
-                
+                assigned_category = 'Other'
                 for category, keywords in self.category_rules.items():
-                    if category == 'Other':
-                        continue
-                    
-                    for keyword in keywords:
-                        if keyword.lower() in description:
-                            assigned_category = category
-                            break
-                    
-                    if assigned_category != 'Other':
+                    if any(keyword.lower() in description for keyword in keywords):
+                        assigned_category = category
                         break
-                
                 categorized_df.at[idx, 'category'] = assigned_category
-
-        # Simple sub-category assignment (can be enhanced later)
-        for idx, row in categorized_df.iterrows():
-            amount = abs(float(row['amount']))
-            if amount > 10000:
-                categorized_df.at[idx, 'sub_category'] = 'Large Transaction'
-            elif amount < 100:
-                categorized_df.at[idx, 'sub_category'] = 'Small Transaction'
-            else:
-                categorized_df.at[idx, 'sub_category'] = 'Regular Transaction'
         
         return categorized_df
-
-    def get_processing_summary(self, original_df: pd.DataFrame, processed_df: pd.DataFrame) -> Dict:
-        """
-        Generate a simple summary of the processing results.
-        
-        Args:
-            original_df: Original raw DataFrame
-            processed_df: Final processed DataFrame
-            
-        Returns:
-            Dictionary with processing statistics
-        """
-        return {
-            'original_rows': len(original_df),
-            'processed_rows': len(processed_df),
-            'rows_removed': len(original_df) - len(processed_df),
-            'categories_assigned': len(processed_df[processed_df['category'].notna()]),
-            'processing_success': True
-        }
