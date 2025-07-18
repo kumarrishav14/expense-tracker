@@ -12,7 +12,7 @@ import json
 from pydantic import ValidationError
 from typing import Dict, List
 
-from ai.ollama.factory import get_ollama_client, is_ollama_available
+from ai.ollama.factory import get_ollama_client
 from core.database.db_interface import DatabaseInterface
 from .abstract_processor import AbstractDataProcessor, StandardTransaction
 
@@ -24,11 +24,8 @@ class AIDataProcessor(AbstractDataProcessor):
 
     def __init__(self):
         """
-        Initializes the AI Data Processor, checking for LLM service availability.
+        Initializes the AI Data Processor.
         """
-        if not is_ollama_available():
-            raise ConnectionError("Ollama service is not available. Please start Ollama to use the AIDataProcessor.")
-        self.ollama_client = get_ollama_client()
         self.db_interface = DatabaseInterface()
 
     def _prepare_category_prompt_data(self, categories_df: pd.DataFrame) -> Dict[str, List[str]]:
@@ -97,18 +94,7 @@ class AIDataProcessor(AbstractDataProcessor):
     def process_raw_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Processes a raw DataFrame using the LLM to standardize and categorize it.
-
-        The method is decorated with @enforce_output_schema from the parent class,
-        which guarantees the final DataFrame structure.
-
-        Args:
-            df: A raw pandas DataFrame from a file parser.
-
-        Returns:
-            A standardized pandas DataFrame with a guaranteed schema.
-        
-        Raises:
-            ValueError: If the input DataFrame is empty or the LLM response is invalid.
+        The method is decorated with @enforce_output_schema from the parent class.
         """
         if df.empty:
             raise ValueError("Input DataFrame is empty.")
@@ -122,9 +108,11 @@ class AIDataProcessor(AbstractDataProcessor):
 
         # Create the prompt and get the LLM response
         prompt = self._create_llm_prompt(data_text, category_hierarchy)
-        llm_response = self.ollama_client.generate_completion(prompt)
-
-        # --- Pydantic Validation ---
+        
+        # Get a fresh Ollama client to ensure the latest settings are used
+        ollama_client = get_ollama_client()
+        llm_response = ollama_client.generate_completion(prompt)
+        print(f"\n****LLM Response:****\n {llm_response}")
         try:
             # Parse the JSON response from the LLM
             parsed_json = json.loads(llm_response)

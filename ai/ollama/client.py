@@ -149,7 +149,11 @@ class OllamaClient:
         data = {
             "model": model_name,
             "prompt": prompt,
-            "stream": False  # Keep it simple for now
+            "stream": False,  # Keep it simple for now,
+            "think": False,
+            "options": {
+                "num_ctx": 36000,
+            }
         }
         
         try:
