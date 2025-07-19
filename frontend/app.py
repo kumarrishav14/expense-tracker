@@ -15,9 +15,13 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from frontend.tabs import statement_input_tab, settings_tab
+from core.database.seeder import initialize_database
 
 def main():
     """Main function to run the Streamlit application."""
+    # Initialize the database with default categories if it's empty
+    initialize_database()
+
     st.set_page_config(layout="wide")
 
     st.title("Expenses Tracking Tool")

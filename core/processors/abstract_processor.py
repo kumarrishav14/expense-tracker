@@ -70,7 +70,7 @@ def enforce_output_schema(func):
             
         # 2. Enforce Data Types
         try:
-            final_df['transaction_date'] = pd.to_datetime(final_df['transaction_date']).dt.date
+            final_df['transaction_date'] = pd.to_datetime(final_df['transaction_date'])
             final_df['amount'] = pd.to_numeric(final_df['amount'])
             final_df['description'] = final_df['description'].astype(str)
             final_df['category'] = final_df['category'].astype(str)

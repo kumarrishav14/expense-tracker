@@ -14,7 +14,7 @@ from typing import Dict, List
 
 from ai.ollama.factory import get_ollama_client
 from core.database.db_interface import DatabaseInterface
-from .abstract_processor import AbstractDataProcessor, StandardTransaction
+from .abstract_processor import AbstractDataProcessor, StandardTransaction, enforce_output_schema
 
 class AIDataProcessor(AbstractDataProcessor):
     """
@@ -66,17 +66,19 @@ class AIDataProcessor(AbstractDataProcessor):
         category_json_string = json.dumps(category_hierarchy, indent=2)
 
         return f"""
-        You are an expert financial data extraction and categorization AI. Your task is to analyze the following raw transaction data, which is in a CSV format, and convert it into a structured JSON output.
+        You are an expert financial data extraction and categorization AI. Your task is to analyze the following raw transaction data from bank statements, which is in a CSV format, and convert it into a structured JSON output.
 
         Follow these instructions precisely:
         1.  Analyze each row in the provided data.
         2.  For each row, extract the transaction description, date, and amount.
-        3.  The 'transaction_date' must be in 'YYYY-MM-DD' format.
-        4.  The 'amount' must be a floating-point number. Represent credits as positive numbers and debits as negative numbers.
-        5.  Assign a 'category' and 'sub_category' to each transaction based on the provided hierarchy. The 'category' must be one of the parent keys in the JSON structure. The 'sub_category' must be one of the items from the corresponding list.
-        6.  If a transaction clearly fits a parent category but not a specific sub-category, you may leave the 'sub_category' blank.
-        7.  If no suitable category is found, assign 'category' to 'Other' and leave 'sub_category' blank.
-        8.  Return the output as a single, valid JSON array of objects. Do not include any other text or explanations in your response.
+        3.  The 'description' field in your output MUST be the original description from the raw data.
+        4.  The 'transaction_date' must be in 'YYYY-MM-DD' format.
+        5.  The 'amount' must be a floating-point number. Represent credits as positive numbers and debits as negative numbers. The balance amount should be ignonred.
+        6.  Assign a 'category' and 'sub_category' to each transaction based on the provided hierarchy. The 'category' must be one of the parent keys in the JSON structure. The 'sub_category' must be one of the items from the corresponding list.
+        7.  If a transaction clearly fits a parent category but not a specific sub-category, you may leave the 'sub_category' blank.
+        8.  If no suitable category is found, assign 'category' to 'Other' and leave 'sub_category' blank.
+        9.  Return the output as a single, valid JSON array of objects. Do not include any other text or explanations in your response.
+        **You should not split a single row into multiple objects. Each row in the input should correspond to a single object in the output.**
 
         Here is the category hierarchy to use:
         ```json
@@ -88,9 +90,15 @@ class AIDataProcessor(AbstractDataProcessor):
         {df_text}
         ---
 
-        Respond with only the JSON array.
+        Respond with only the JSON array with each json object having below fields:
+            "transaction_date",
+            "description",
+            "amount",
+            "category",
+            "sub_category"
         """
 
+    @enforce_output_schema
     def process_raw_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Processes a raw DataFrame using the LLM to standardize and categorize it.
@@ -115,6 +123,10 @@ class AIDataProcessor(AbstractDataProcessor):
         print(f"\n****LLM Response:****\n {llm_response}")
         try:
             # Parse the JSON response from the LLM
+            if llm_response.startswith("```json"):
+                llm_response = llm_response[8:].strip()
+            if llm_response.endswith("```"):
+                llm_response = llm_response[:-3].strip()
             parsed_json = json.loads(llm_response)
             if not isinstance(parsed_json, list):
                 raise ValueError("LLM did not return a JSON array.")
