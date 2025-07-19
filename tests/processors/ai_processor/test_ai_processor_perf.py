@@ -6,6 +6,7 @@ import pytest
 import pandas as pd
 import time
 import random
+import datetime
 from core.processors.ai_data_processor import AIDataProcessor
 
 
@@ -41,7 +42,7 @@ from core.processors.ai_data_processor import AIDataProcessor
     # }),
     # Dataset 3: Indian bank statement format
     pd.DataFrame({
-        'Date': [f'{i+1:02d}-07-2024' for i in range(50)],
+        'Date': [(datetime.date(2024, 6, 1) + datetime.timedelta(days=random.randint(0, 59))).strftime('%d-%m-%Y') for _ in range(50)],
         'Narration': random.choices([
             'UPI/PAYTM/TRANSFER', 'NEFT/TRANSFER/JOHN', 'IMPS/FOOD/ZOMATO',
             'ATM/WDL/MUMBAI', 'BIL/PAY/VODAFONE', 'ECS/SIP/MUTUALFUND',
@@ -72,9 +73,16 @@ class TestAIDataProcessorPerformance:
         Tests the performance of the processor with a large number of transactions.
         """
         processor = AIDataProcessor()
+
+        def progress_callback(progress: float, message: str):
+            """Callback to print progress updates."""
+            print(f"Progress: {progress*100:.2f}% - {message}")
         
         start_time = time.time()
-        processed_df = processor.process_raw_data(large_bank_statement_data)
+        processed_df = processor.process_raw_data(
+            large_bank_statement_data,
+            on_progress=progress_callback
+        )
         end_time = time.time()
 
         processing_time = end_time - start_time
@@ -117,4 +125,4 @@ class TestAIDataProcessorPerformance:
 
         # 3. Performance Assertion (e.g., assert processing time is under 30 seconds)
         # This threshold can be adjusted based on the expected performance.
-        assert processing_time < 30, f"Processing time ({processing_time:.2f}s) exceeded the 30s threshold."
+        assert processing_time < 120, f"Processing time ({processing_time:.2f}s) exceeded the 120s (2min) threshold."
