@@ -9,4 +9,34 @@ wheels/
 # Virtual environments
 .venv
 .DS*
+
+# Gemini generated files
+GEMINI.md
+.agent.md
+
+# Bug files
+bug*.txt
+
+# Local development files
+dev.md
+to-do.md
+
+# Database files
+*.db
+
+# Configuration files
+ollama_config.json
+.env
+
+# Test files
+pytest.ini
+
+# Sample data
+sample_transactions.csv
+
+# Temporary files
+temp_prompt_tuning.py
+tmp_rovodev_ollama_architecture_review.md
+
+# Planning files
 planning/
