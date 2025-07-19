@@ -1,0 +1,11 @@
+{
+  "Income": [],
+  "Housing": ["Rent/Mortgage", "Property Tax", "Repairs"],
+  "Food": ["Groceries", "Restaurants", "Takeaway"],
+  "Transportation": ["Fuel", "Public Transit", "Repairs", "Ride Sharing"],
+  "Utilities": ["Electricity", "Water", "Internet", "Mobile Phone"],
+  "Healthcare": ["Insurance", "Pharmacy", "Doctor Visits"],
+  "Personal Spending": ["Shopping", "Entertainment", "Subscriptions"],
+  "Financial": ["Transfer", "Loan Payment", "Investment"],
+  "Other": []
+}

@@ -10,11 +10,16 @@ relying on hard-coded rules.
 import pandas as pd
 import json
 from pydantic import ValidationError
-from typing import Dict, List
+from typing import Dict, List, Optional, Callable
+import math
 
 from ai.ollama.factory import get_ollama_client
 from core.database.db_interface import DatabaseInterface
 from .abstract_processor import AbstractDataProcessor, StandardTransaction, enforce_output_schema
+
+# Configurable parameters for batch processing
+BATCH_SIZE = 5
+MAX_RETRIES = 1
 
 class AIDataProcessor(AbstractDataProcessor):
     """
@@ -98,57 +103,81 @@ class AIDataProcessor(AbstractDataProcessor):
             "sub_category"
         """
 
-    @enforce_output_schema
-    def process_raw_data(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _process_batch(self, batch_df: pd.DataFrame, category_hierarchy: Dict[str, List[str]]) -> List[Dict]:
         """
-        Processes a raw DataFrame using the LLM to standardize and categorize it.
+        Processes a single batch of data using the LLM.
+        """
+        data_text = batch_df.to_csv(index=False)
+        prompt = self._create_llm_prompt(data_text, category_hierarchy)
+        
+        ollama_client = get_ollama_client()
+        llm_response = ollama_client.generate_completion(prompt)
+        
+        if llm_response.startswith("```json"):
+            llm_response = llm_response[8:].strip()
+        if llm_response.endswith("```"):
+            llm_response = llm_response[:-3].strip()
+            
+        parsed_json = json.loads(llm_response)
+        if not isinstance(parsed_json, list):
+            raise ValueError("LLM did not return a JSON array.")
+
+        validated_records = []
+        for record in parsed_json:
+            try:
+                validated_transaction = StandardTransaction(**record)
+                validated_records.append(validated_transaction.model_dump())
+            except ValidationError as e:
+                print(f"Skipping a record due to validation error: {e}")
+                continue
+        
+        return validated_records
+
+    @enforce_output_schema
+    def process_raw_data(self, df: pd.DataFrame, on_progress: Optional[Callable[[float, str], None]] = None) -> pd.DataFrame:
+        """
+        Processes a raw DataFrame using the LLM to standardize and categorize it in batches.
         The method is decorated with @enforce_output_schema from the parent class.
         """
         if df.empty:
             raise ValueError("Input DataFrame is empty.")
 
-        # Serialize DataFrame to a CSV string for the LLM
-        data_text = df.to_csv(index=False)
-        
-        # Fetch and prepare categories from the database to guide the LLM
         categories_df = self.db_interface.get_categories_table()
         category_hierarchy = self._prepare_category_prompt_data(categories_df)
-
-        # Create the prompt and get the LLM response
-        prompt = self._create_llm_prompt(data_text, category_hierarchy)
         
-        # Get a fresh Ollama client to ensure the latest settings are used
-        ollama_client = get_ollama_client()
-        llm_response = ollama_client.generate_completion(prompt)
-        print(f"\n****LLM Response:****\n {llm_response}")
-        try:
-            # Parse the JSON response from the LLM
-            if llm_response.startswith("```json"):
-                llm_response = llm_response[8:].strip()
-            if llm_response.endswith("```"):
-                llm_response = llm_response[:-3].strip()
-            parsed_json = json.loads(llm_response)
-            if not isinstance(parsed_json, list):
-                raise ValueError("LLM did not return a JSON array.")
+        all_results = []
+        num_batches = math.ceil(len(df) / BATCH_SIZE)
 
-            validated_records = []
-            for record in parsed_json:
-                try:
-                    # Validate each record against the Pydantic model
-                    validated_transaction = StandardTransaction(**record)
-                    validated_records.append(validated_transaction.model_dump())
-                except ValidationError as e:
-                    print(f"Skipping a record due to validation error: {e}")
-                    continue
+        for i in range(num_batches):
+            batch_start = i * BATCH_SIZE
+            batch_end = batch_start + BATCH_SIZE
+            batch_df = df.iloc[batch_start:batch_end]
             
-            if not validated_records:
-                raise ValueError("No valid transaction records were processed from the LLM response.")
+            retries = 0
+            while retries <= MAX_RETRIES:
+                try:
+                    validated_records = self._process_batch(batch_df, category_hierarchy)
+                    # print(f"Processed batch {i+1}/{num_batches} with {len(validated_records)} records.")
+                    # print(f"validated_records: {validated_records}")  # Print first 5 records for debugging
+                    all_results.extend(validated_records)
+                    
+                    if on_progress:
+                        progress = (i + 1) / num_batches
+                        on_progress(progress, f"Successfully processed batch {i+1}/{num_batches}")
+                    
+                    break  # Success, exit retry loop
+                
+                except Exception as e:
+                    retries += 1
+                    print(f"Error processing batch {i+1}, attempt {retries}/{MAX_RETRIES+1}: {e}")
+                    if retries > MAX_RETRIES:
+                        if on_progress:
+                            progress = (i + 1) / num_batches
+                            on_progress(progress, f"Failed to process batch {i+1} after {MAX_RETRIES} retries. Skipping.")
+                        break # Exit retry loop after max retries
 
-            # Convert the list of validated dictionaries to a DataFrame
-            return pd.DataFrame(validated_records)
+        if not all_results:
+            return pd.DataFrame() # Return empty DataFrame if no records were processed
 
-        except json.JSONDecodeError:
-            raise ValueError("Failed to decode JSON from the LLM response.")
-        except Exception as e:
-            # Catch any other unexpected errors during processing
-            raise ValueError(f"An unexpected error occurred while processing the LLM response: {e}")
+        return pd.DataFrame(all_results)
+

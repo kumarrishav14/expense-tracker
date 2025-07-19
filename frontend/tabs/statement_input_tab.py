@@ -41,23 +41,34 @@ def render():
 
         # --- Process & Review Button ---
         if st.button("Process & Review"):
-            with st.spinner("Processing file..."):
-                try:
-                    # --- Backend Pipeline ---
-                    if file_type == "application/pdf":
-                        raw_df = parse_pdf(file_stream, password=password)
-                    else: # CSV
-                        raw_df = parse_csv_file(file_stream)
-                    
-                    processor = AIDataProcessor()
-                    processed_df = processor.process_raw_data(raw_df)
-                    
-                    st.session_state.processed_df = processed_df
-                    st.session_state.upload_error = None # Clear previous errors
+            progress_bar = st.progress(0.0, text="Starting processing...")
 
-                except ValueError as e:
-                    st.session_state.upload_error = str(e)
-                    st.session_state.processed_df = None # Clear previous results
+            def update_progress_in_ui(progress_value, message_text):
+                progress_bar.progress(progress_value, text=message_text)
+
+            try:
+                # --- Backend Pipeline ---
+                if file_type == "application/pdf":
+                    raw_df = parse_pdf(file_stream, password=password)
+                else: # CSV
+                    raw_df = parse_csv_file(file_stream)
+                
+                processor = AIDataProcessor()
+                processed_df = processor.process_raw_data(
+                    raw_df, 
+                    on_progress=update_progress_in_ui
+                )
+                
+                st.session_state.processed_df = processed_df
+                st.session_state.upload_error = None # Clear previous errors
+                progress_bar.progress(1.0, text="Processing complete!")
+
+
+            except ValueError as e:
+                st.session_state.upload_error = str(e)
+                st.session_state.processed_df = None # Clear previous results
+                progress_bar.progress(1.0, text="An error occurred.")
+
 
     # --- Display Error ---
     if st.session_state.upload_error:
