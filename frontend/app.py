@@ -14,7 +14,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from frontend.tabs import statement_input_tab, settings_tab
+from frontend.tabs import dashboard_tab, statement_input_tab, settings_tab
 from core.database.seeder import initialize_database
 
 def main():
@@ -27,12 +27,15 @@ def main():
     st.title("Expenses Tracking Tool")
 
     # --- Tab Navigation ---
-    tab1, tab2 = st.tabs(["Statement Input", "Settings"])
+    tab1, tab2, tab3 = st.tabs(["Dashboard", "Statement Input", "Settings"])
 
     with tab1:
-        statement_input_tab.render()
+        dashboard_tab.render()
 
     with tab2:
+        statement_input_tab.render()
+
+    with tab3:
         settings_tab.render()
 
 if __name__ == "__main__":
