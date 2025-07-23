@@ -34,9 +34,9 @@ def render():
     # --- Render Dashboard Components ---
     kpis = data.get("kpis", {})
     col1, col2, col3 = st.columns(3)
-    col1.metric("Total Spend (Current Month)", f"${kpis.get('total_spend', 0):,.2f}")
+    col1.metric("Total Spend (Current Month)", f"₹{kpis.get('total_spend', 0):,.2f}")
     col2.metric("Top Spending Category", str(kpis.get('top_category', 'N/A')))
-    col3.metric("Largest Transaction (Current Month)", f"${kpis.get('largest_transaction', 0):,.2f}")
+    col3.metric("Largest Transaction (Current Month)", f"₹{kpis.get('largest_transaction', 0):,.2f}")
 
     st.divider()
 
