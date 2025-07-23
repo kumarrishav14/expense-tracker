@@ -75,9 +75,9 @@ class OllamaFactory:
 
 
 # Convenience functions for easy access
-def get_ollama_client() -> OllamaClient:
+def get_ollama_client(force_reload: bool = False) -> OllamaClient:
     """Get Ollama client instance."""
-    return OllamaFactory.get_client()
+    return OllamaFactory.get_client(force_reload)
 
 
 def is_ollama_available() -> bool:
