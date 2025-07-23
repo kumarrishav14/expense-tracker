@@ -66,20 +66,37 @@ class DashboardProcessor:
         of data structures ready for rendering on the dashboard.
         """
         if transactions_df.empty:
-            return {"kpis": {}, "category_chart_data": pd.DataFrame(), "spending_over_time_data": pd.DataFrame(), "ai_insights": {}, "recent_transactions": pd.DataFrame()}
+            return {
+                "kpis": {},
+                "category_chart_data": pd.DataFrame(),
+                "spending_over_time_data": pd.DataFrame(),
+                "ai_insights": {},
+                "recent_transactions": pd.DataFrame(),
+                "display_month": {}
+            }
 
-        # Ensure date column is in datetime format
         transactions_df['transaction_date'] = pd.to_datetime(transactions_df['transaction_date'])
-        
-        # --- KPIs and Category Chart (Current Month) ---
+
+        # --- Target Month Logic ---
+        latest_transaction_date = transactions_df['transaction_date'].max()
+        target_month = latest_transaction_date.month
+        target_year = latest_transaction_date.year
+
         current_month = datetime.now().month
         current_year = datetime.now().year
+        is_current_month = (target_month == current_month) and (target_year == current_year)
+
+        display_month = {
+            "month_name": latest_transaction_date.strftime("%B %Y"),
+            "is_current": is_current_month
+        }
+
+        # --- KPIs and Category Chart (Target Month) ---
         monthly_df = transactions_df[
-            (transactions_df['transaction_date'].dt.month == current_month) & 
-            (transactions_df['transaction_date'].dt.year == current_year) & 
-            (transactions_df['amount'] < 0) # Only debits
+            (transactions_df['transaction_date'].dt.month == target_month) &
+            (transactions_df['transaction_date'].dt.year == target_year) &
+            (transactions_df['amount'] < 0)
         ].copy()
-        
         monthly_df['amount'] = monthly_df['amount'].abs()
 
         total_spend = monthly_df['amount'].sum()
@@ -98,7 +115,7 @@ class DashboardProcessor:
         # --- Spending Over Time (Last 6 Months) ---
         six_months_ago = pd.Timestamp.now() - pd.DateOffset(months=5)
         spending_over_time_df = transactions_df[
-            (transactions_df['transaction_date'] >= six_months_ago) & 
+            (transactions_df['transaction_date'] >= six_months_ago) &
             (transactions_df['amount'] < 0)
         ].copy()
         spending_over_time_df['amount'] = spending_over_time_df['amount'].abs()
@@ -108,7 +125,7 @@ class DashboardProcessor:
 
         # --- AI Insights ---
         financial_summary = {
-            "current_month_spend": total_spend,
+            "target_month_spend": total_spend,
             "top_spending_category": top_category,
             "category_totals": category_chart_data.set_index('category')['amount'].to_dict()
         }
@@ -125,5 +142,6 @@ class DashboardProcessor:
             "category_chart_data": category_chart_data,
             "spending_over_time_data": spending_over_time_data,
             "ai_insights": ai_insights,
-            "recent_transactions": recent_transactions
+            "recent_transactions": recent_transactions,
+            "display_month": display_month
         }

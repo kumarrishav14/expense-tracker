@@ -69,6 +69,17 @@ class DatabaseInterface:
         self.db = Database(db_url)
     
     # --- Export methods (DB to pandas) ---
+    def get_transactions_count(self) -> int:
+        """
+        Gets the total number of transactions in the database.
+        """
+        return self.db.get_transactions_count()
+
+    def get_latest_transaction_timestamp(self) -> Optional[datetime.datetime]:
+        """
+        Gets the timestamp of the most recent transaction.
+        """
+        return self.db.get_latest_transaction_timestamp()
     
     def get_categories_table(self) -> pd.DataFrame:
         """

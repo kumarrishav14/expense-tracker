@@ -13,30 +13,39 @@ from core.processors.dashboard_processor import DashboardProcessor
 from core.database.db_interface import DatabaseInterface
 
 def render():
-    """Renders the Dashboard tab."""
-    st.header("Dashboard")
-
+    """Renders the Dashboard tab with intelligent caching."""
     db_interface = DatabaseInterface()
-    transactions_df = db_interface.get_transactions_table()
 
-    if transactions_df.empty:
+    # --- Cold Start Check ---
+    if db_interface.get_transactions_count() == 0:
         st.info("Welcome! Upload a statement to see your financial dashboard.")
         return
 
-    # --- Data Processing ---
-    if 'dashboard_data' not in st.session_state or st.button("Refresh Data"):
-        with st.spinner("Analyzing your financial data..."):
+    # --- Intelligent Caching Logic ---
+    latest_timestamp = db_interface.get_latest_transaction_timestamp()
+    if ('dashboard_data' not in st.session_state or 
+        st.session_state.get('last_transaction_timestamp') != latest_timestamp):
+        
+        with st.spinner("Analyzing your latest financial data..."):
+            transactions_df = db_interface.get_transactions_table()
             processor = DashboardProcessor()
             st.session_state.dashboard_data = processor.process_dashboard_data(transactions_df)
+            st.session_state.last_transaction_timestamp = latest_timestamp
     
     data = st.session_state.dashboard_data
+    display_month = data.get("display_month", {})
+
+    # --- Header and Info Alert ---
+    st.header(f"Dashboard - {display_month.get('month_name', '' )}")
+    if not display_month.get('is_current', True):
+        st.info(f"Displaying data for {display_month.get('month_name', '')}, as it is the most recent month with transactions.")
 
     # --- Render Dashboard Components ---
     kpis = data.get("kpis", {})
     col1, col2, col3 = st.columns(3)
-    col1.metric("Total Spend (Current Month)", f"₹{kpis.get('total_spend', 0):,.2f}")
+    col1.metric(f"Total Spend in {display_month.get('month_name', '')}", f"₹{kpis.get('total_spend', 0):,.2f}")
     col2.metric("Top Spending Category", str(kpis.get('top_category', 'N/A')))
-    col3.metric("Largest Transaction (Current Month)", f"₹{kpis.get('largest_transaction', 0):,.2f}")
+    col3.metric(f"Largest Transaction in {display_month.get('month_name', '')}", f"₹{kpis.get('largest_transaction', 0):,.2f}")
 
     st.divider()
 
@@ -49,7 +58,7 @@ def render():
             fig = px.pie(category_data, names='category', values='amount', hole=0.3)
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.write("No spending data for this month.")
+            st.write(f"No spending data for {display_month.get('month_name', '')}.")
 
     with col2:
         st.subheader("Spending Over Time")

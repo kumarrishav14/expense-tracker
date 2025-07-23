@@ -495,6 +495,21 @@ class Database:
         db = session if session is not None else self.get_session()
         return db.query(model.Transaction).all()
 
+    def get_transactions_count(self, session: Optional[Session] = None) -> int:
+        """
+        Gets the total number of transactions in the database.
+        """
+        db = session if session is not None else self.get_session()
+        return db.query(model.Transaction).count()
+
+    def get_latest_transaction_timestamp(self, session: Optional[Session] = None) -> Optional[datetime.datetime]:
+        """
+        Gets the timestamp of the most recent transaction.
+        """
+        db = session if session is not None else self.get_session()
+        latest_transaction = db.query(model.Transaction).order_by(model.Transaction.transaction_date.desc()).first()
+        return latest_transaction.transaction_date if latest_transaction else None
+
     def update_transaction(
         self,
         transaction_id: int,
