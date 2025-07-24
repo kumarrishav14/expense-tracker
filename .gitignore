@@ -39,4 +39,7 @@ temp_prompt_tuning.py
 tmp_rovodev_ollama_architecture_review.md
 
 # Planning files
-planning/
+planning/*.mmd
+prompts
+*.csv
+enhanced*

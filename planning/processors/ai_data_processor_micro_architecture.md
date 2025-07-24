@@ -2,7 +2,7 @@
 
 **Author:** AI Architect
 **Date:** July 18, 2025
-**Version:** 2.2
+**Version:** 2.3
 
 ## 1. Component Overview
 
@@ -46,9 +46,10 @@ The processor's position remains the same. It takes raw data from parsers and pr
 
 | Responsibility | Description |
 |---|---|
-| **Batch Processing** | **(New)** Splits large input DataFrames into smaller, manageable chunks to ensure reliable processing by the LLM. |
-| **Retry Logic** | **(New)** For each chunk, retries the processing step up to a configurable number of times if an error occurs. |
-| **Progress Reporting** | **(New)** Invokes an optional callback function to report the status (success or failure) of each batch. |
+| **Date Format Discovery** | **(New)** On a small sample of the data, uses the LLM to identify the `strftime` format of the date column. |
+| **Batch Processing** | Splits the input DataFrame into chunks for processing. |
+| **Retry Logic** | For each chunk, retries the processing step up to a configurable number of times. |
+| **Progress Reporting** | Invokes an optional callback to report the status of each batch. |
 | **Category Transformation** | Transform the normalized `(name, parent_category)` DataFrame from the `DBInterface` into a hierarchical dictionary suitable for prompt engineering. |
 | **Data Serialization** | Convert an input pandas DataFrame *chunk* into a simple text format (e.g., CSV) for the LLM. |
 | **Prompt Engineering** | Dynamically construct a detailed prompt for each chunk. |
@@ -56,43 +57,35 @@ The processor's position remains the same. It takes raw data from parsers and pr
 | **Content Validation** | Use a Pydantic model to validate the content, structure, and data types of each individual record in the JSON response from the LLM. |
 | **DataFrame Conversion** | Convert the list of validated Pydantic objects from a chunk's response into a pandas DataFrame. |
 
-## 5. Component Logic and Sequence (Batch with Retries)
+## 5. Component Logic: The Two-Pass Model
 
-The internal logic is a nested loop: an outer loop for batches and an inner loop for retries.
+The internal logic is now sequential: a discovery pass followed by a processing pass.
 
 ```mermaid
 sequenceDiagram
     participant Caller as Application Layer
-    participant Decorator as @enforce_output_schema
     participant AIDP as AIDataProcessor
+    participant Ollama as LLM
 
-    Caller->>+Decorator: 1. process_raw_data(raw_df, on_progress=callback_func)
-    Decorator->>+AIDP: 2. Calls the wrapped method
+    Caller->>+AIDP: 1. process_raw_data(raw_df, on_progress=...)
 
-    AIDP->>AIDP: 3. Splits raw_df into chunks
-    Note right of AIDP: Initializes successful_results = []
+    Note over AIDP: **Pass 1: Date Format Discovery**
+    AIDP->>AIDP: 2. Takes a small sample from raw_df
+    AIDP->>+Ollama: 3. Sends "Discovery Prompt" with sample
+    Ollama-->>-AIDP: 4. Returns date_format_string (e.g., "%Y/%d/%m")
+
+    Note over AIDP: **Pass 2: Batch Processing**
+    AIDP->>AIDP: 5. Splits raw_df into chunks
 
     loop For each chunk
-        loop Up to MAX_RETRIES + 1 times
-            Note right of AIDP: Attempting to process chunk...
-            alt Processing is Successful
-                AIDP->>AIDP: Add results to successful_results
-                AIDP-->>Caller: on_progress(progress, "Success on batch X")
-                break
-            end
-        end
-        
-        alt Chunk still failed after all retries
-             Note right of AIDP: Log error and discard chunk data.
-             AIDP-->>Caller: on_progress(progress, "Error on batch X after retries. Skipping.")
-        end
+        Note over AIDP: Injects date_format_string into the main prompt.
+        AIDP->>+Ollama: 6. Sends "Processing Prompt" for the batch
+        Ollama-->>-AIDP: 7. Returns processed JSON for the batch
+        AIDP-->>Caller: 8. on_progress(progress, message)
     end
 
-    AIDP->>AIDP: 10. Combines all successful results into a single DataFrame
-    AIDP-->>-Decorator: 11. Returns final DataFrame
-
-    Decorator->>Decorator: 12. Enforces final schema on the aggregated DataFrame
-    Decorator-->>-Caller: 13. Returns final, guaranteed-schema DataFrame
+    AIDP->>AIDP: 9. Aggregates results and returns final DataFrame
+    AIDP-->>-Caller: 10. Returns final, schema-compliant DataFrame
 ```
 
 ### **Category Data Transformation (`_prepare_category_prompt_data`)**
@@ -115,10 +108,9 @@ This new private helper method is critical for creating an effective prompt.
 
 ### **Developer Implementation Notes**
 
-To allow for easy tuning without changing core logic, the following should be defined as configurable variables at the top of the `ai_data_processor.py` file:
-
-*   **`BATCH_SIZE`**: The number of rows in each chunk. A default of `25` is recommended.
-*   **`MAX_RETRIES`**: The number of extra attempts to make on a failed batch. A default of `1` is recommended.
+-   **`BATCH_SIZE`**: Should be a configurable variable. Default: `25`.
+-   **`MAX_RETRIES`**: Should be a configurable variable. Default: `1`.
+-   **`DATE_SAMPLE_SIZE`**: The number of rows for the discovery pass. Default: `20`.
 
 ## 6. Decoupling via the Callback Pattern
 
@@ -186,6 +178,7 @@ class AbstractDataProcessor(ABC):
 
 ## 9. Error Handling
 
-*   **Transient Errors:** Handled by the retry mechanism.
-*   **Persistent Batch Errors:** If a batch fails after all retry attempts, the error is logged, the failure is reported via the `on_progress` callback, and the data for that batch is **discarded**. The processor then moves to the next batch.
-*   **Schema Enforcement Failure:** This remains a critical error. If the final, aggregated DataFrame cannot be conformed to the schema by the decorator, it will raise a `SchemaValidationError`.
+-   **Date Discovery Failure:** If the first pass fails to return a valid format string, the entire process should fail immediately with a `ValueError`, as consistent processing is impossible.
+-   **Transient Errors:** Handled by the retry mechanism.
+-   **Persistent Batch Errors:** If a batch fails after all retry attempts, the error is logged, the failure is reported via the `on_progress` callback, and the data for that batch is **discarded**. The processor then moves to the next batch.
+-   **Schema Enforcement Failure:** This remains a critical error. If the final, aggregated DataFrame cannot be conformed to the schema by the decorator, it will raise a `SchemaValidationError`.

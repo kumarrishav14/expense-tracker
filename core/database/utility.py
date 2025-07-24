@@ -36,7 +36,9 @@ def visualise_table(session: Session, table_name: str):
     try:
         df = pd.read_sql_table(table_name, session.bind)
         print(f"Table: {table_name}")
-        print(df)
+        # Exclude 'created_at' and 'updated_at' columns if present
+        exclude_cols = [col for col in ['created_at', 'updated_at'] if col in df.columns]
+        print(df.drop(columns=exclude_cols))
     except Exception as e:
         print(f"Error visualising table {table_name}: {e}")
 
