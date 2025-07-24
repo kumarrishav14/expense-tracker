@@ -20,12 +20,6 @@ class TestAIDataProcessor:
         """
         bank_statement_df, expected_sign, expected_amount = bank_statement_data
         processor = AIDataProcessor()
-
-        categories_df = processor.db_interface.get_categories_table()
-        category_hierarchy = processor._prepare_category_prompt_data(categories_df)
-        prompt = processor._create_llm_prompt(data_text, category_hierarchy)
-        print(f"\n{'='*50}\n[PROMPT SENT TO LLM]\n{'='*50}\n{prompt}")
-
         processed_df = processor.process_raw_data(bank_statement_df)
 
         # 1. Schema Validation
