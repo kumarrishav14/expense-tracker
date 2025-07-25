@@ -22,9 +22,9 @@ from .abstract_processor import AbstractDataProcessor, StandardTransaction, enfo
 
 # --- Configuration ---
 HEAD_SAMPLE_SIZE = 10
-RANDOM_SAMPLE_SIZE = 10
+RANDOM_SAMPLE_SIZE = 5
 TAIL_SAMPLE_SIZE = 10
-CATEGORIZATION_BATCH_SIZE = 15
+CATEGORIZATION_BATCH_SIZE = 10
 MAX_RETRIES = 1
 
 # --- Schemas for LLM Validation ---
