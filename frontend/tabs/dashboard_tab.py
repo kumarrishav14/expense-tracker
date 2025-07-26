@@ -29,7 +29,8 @@ def render():
         with st.spinner("Analyzing your latest financial data..."):
             transactions_df = db_interface.get_transactions_table()
             processor = DashboardProcessor()
-            st.session_state.dashboard_data = processor.process_dashboard_data(transactions_df)
+            # Process non-AI data first
+            st.session_state.dashboard_data = processor.process_dashboard_data(transactions_df, include_ai_insight=False)
             st.session_state.last_transaction_timestamp = latest_timestamp
     
     data = st.session_state.dashboard_data
@@ -70,16 +71,27 @@ def render():
 
     st.divider()
 
-    col1, col2 = st.columns([1, 1])
+    # --- AI Insight Section (Deferred) ---
+    _render_ai_insight_section(data.get("ai_insight_data"))
 
-    with col1:
-        st.subheader("AI Insights")
-        ai_insights = data.get("ai_insights", {})
-        st.info(ai_insights.get("overview", ""))
-        for insight in ai_insights.get("insights", []):
-            st.markdown(f"- {insight}")
+    st.subheader("Recent Transactions")
+    recent_transactions = data.get("recent_transactions")
+    st.dataframe(recent_transactions, use_container_width=True, hide_index=True)
 
-    with col2:
-        st.subheader("Recent Transactions")
-        recent_transactions = data.get("recent_transactions")
-        st.dataframe(recent_transactions, use_container_width=True, hide_index=True)
+def _render_ai_insight_section(ai_insight_data: pd.DataFrame):
+    """Renders the AI insight section, showing a spinner while processing."""
+    st.subheader("AI Insights")
+    if ai_insight_data is None or ai_insight_data.empty:
+        st.info("Not enough data available to generate AI insights for this period.")
+        return
+
+    with st.spinner("🤖 Generating AI insight..."):
+        try:
+            processor = DashboardProcessor()
+            ai_insights = processor.get_ai_insight(ai_insight_data)
+            
+            st.info(ai_insights.get("overview", ""))
+            for insight in ai_insights.get("insights", []):
+                st.markdown(f"- {insight}")
+        except Exception as e:
+            st.error(f"Could not generate AI insight: {e}")

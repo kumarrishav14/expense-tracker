@@ -60,7 +60,23 @@ class DashboardProcessor:
             print(f"Error generating AI insights: {e}")
             return {"overview": "Could not generate AI insights at this time.", "insights": []}
 
-    def process_dashboard_data(self, transactions_df: pd.DataFrame) -> Dict[str, Any]:
+    def get_ai_insight(self, transactions_df: pd.DataFrame) -> Dict[str, Any]:
+        """Generates AI insights from a DataFrame of transactions."""
+        if transactions_df.empty:
+            return {"overview": "Not enough data for insights.", "insights": []}
+
+        # This is a simplified summary for the prompt, can be enhanced
+        total_spend = transactions_df[transactions_df['amount'] < 0]['amount'].abs().sum()
+        top_category = transactions_df.groupby('category')['amount'].sum().nlargest(1).index[0] if not transactions_df.empty else "N/A"
+
+        financial_summary = {
+            "total_spend": total_spend,
+            "top_spending_category": top_category,
+        }
+
+        return self._generate_ai_insights(financial_summary, transactions_df)
+
+    def process_dashboard_data(self, transactions_df: pd.DataFrame, include_ai_insight: bool = True) -> Dict[str, Any]:
         """
         Takes a raw transaction DataFrame and returns a dictionary
         of data structures ready for rendering on the dashboard.
@@ -123,16 +139,18 @@ class DashboardProcessor:
         spending_over_time_data = spending_over_time_df.set_index('transaction_date').resample('M')['amount'].sum().reset_index()
         spending_over_time_data['month'] = spending_over_time_data['transaction_date'].dt.strftime('%b %Y')
 
-        # --- AI Insights ---
-        financial_summary = {
-            "target_month_spend": total_spend,
-            "top_spending_category": top_category,
-            "category_totals": category_chart_data.set_index('category')['amount'].to_dict()
-        }
+        # --- AI Insights Data Slice ---
         ninety_days_ago = pd.Timestamp.now() - pd.DateOffset(days=90)
-        ai_data_slice = transactions_df[transactions_df['transaction_date'] >= ninety_days_ago].head(500)
+        ai_insight_data = transactions_df[transactions_df['transaction_date'] >= ninety_days_ago].head(500)
 
-        ai_insights = self._generate_ai_insights(financial_summary, ai_data_slice)
+        ai_insights = {}
+        if include_ai_insight:
+            financial_summary = {
+                "target_month_spend": total_spend,
+                "top_spending_category": top_category,
+                "category_totals": category_chart_data.set_index('category')['amount'].to_dict()
+            }
+            ai_insights = self._generate_ai_insights(financial_summary, ai_insight_data)
 
         # --- Recent Transactions ---
         recent_transactions = transactions_df.sort_values(by='transaction_date', ascending=False).head(10)
@@ -142,6 +160,7 @@ class DashboardProcessor:
             "category_chart_data": category_chart_data,
             "spending_over_time_data": spending_over_time_data,
             "ai_insights": ai_insights,
+            "ai_insight_data": ai_insight_data,
             "recent_transactions": recent_transactions,
             "display_month": display_month
         }
