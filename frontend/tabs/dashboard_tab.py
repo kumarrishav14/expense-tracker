@@ -8,6 +8,7 @@ overview of the user's financial status.
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from typing import Optional
 
 from core.processors.dashboard_processor import DashboardProcessor
 from core.database.db_interface import DatabaseInterface
@@ -29,7 +30,8 @@ def render():
         with st.spinner("Analyzing your latest financial data..."):
             transactions_df = db_interface.get_transactions_table()
             processor = DashboardProcessor()
-            st.session_state.dashboard_data = processor.process_dashboard_data(transactions_df)
+            # Process non-AI data first
+            st.session_state.dashboard_data = processor.process_dashboard_data(transactions_df, include_ai_insight=False)
             st.session_state.last_transaction_timestamp = latest_timestamp
     
     data = st.session_state.dashboard_data
@@ -54,7 +56,7 @@ def render():
     with col1:
         st.subheader("Expenses by Category")
         category_data = data.get("category_chart_data")
-        if not category_data.empty:
+        if category_data is not None and not category_data.empty:
             fig = px.pie(category_data, names='category', values='amount', hole=0.3)
             st.plotly_chart(fig, use_container_width=True)
         else:
@@ -63,23 +65,49 @@ def render():
     with col2:
         st.subheader("Spending Over Time")
         spending_data = data.get("spending_over_time_data")
-        if not spending_data.empty:
+        if spending_data is not None and not spending_data.empty:
             st.bar_chart(spending_data, x='month', y='amount', use_container_width=True)
         else:
             st.write("No spending data available.")
 
     st.divider()
 
-    col1, col2 = st.columns([1, 1])
+    # --- AI Insight Section (Deferred) ---
+    _render_ai_insight_section(data.get("ai_insight_data"))
 
-    with col1:
-        st.subheader("AI Insights")
-        ai_insights = data.get("ai_insights", {})
-        st.info(ai_insights.get("overview", ""))
-        for insight in ai_insights.get("insights", []):
-            st.markdown(f"- {insight}")
+    st.subheader("Recent Transactions")
+    recent_transactions = data.get("recent_transactions")
+    st.dataframe(recent_transactions, use_container_width=True, hide_index=True)
 
-    with col2:
-        st.subheader("Recent Transactions")
-        recent_transactions = data.get("recent_transactions")
-        st.dataframe(recent_transactions, use_container_width=True, hide_index=True)
+
+@st.cache_data
+def generate_cached_ai_insight(ai_insight_data: pd.DataFrame) -> dict:
+    """
+    Generates AI insights for the given data. The results of this function
+    are cached by Streamlit.
+    """
+    try:
+        processor = DashboardProcessor()
+        return processor.get_ai_insight(ai_insight_data)
+    except Exception as e:
+        # Return a dictionary to indicate error, which will also be cached
+        return {"error": str(e)}
+
+
+def _render_ai_insight_section(ai_insight_data: Optional[pd.DataFrame]):
+    """Renders the AI insight section using the cached function."""
+    st.subheader("AI Insights")
+    if ai_insight_data is None or ai_insight_data.empty:
+        st.info("Not enough data available to generate AI insights for this period.")
+        return
+
+    with st.spinner("🤖 Generating AI insight..."):
+        # Call the new cached function instead of the processor directly
+        ai_insights = generate_cached_ai_insight(ai_insight_data)
+
+        if "error" in ai_insights:
+            st.error(f"Could not generate AI insight: {ai_insights['error']}")
+        else:
+            st.info(ai_insights.get("overview", ""))
+            for insight in ai_insights.get("insights", []):
+                st.markdown(f"- {insight}")
