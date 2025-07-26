@@ -8,6 +8,7 @@ by calling the respective modules.
 import sys
 import os
 import streamlit as st
+from streamlit_option_menu import option_menu
 
 # Add the project root to the Python path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -26,16 +27,21 @@ def main():
 
     st.title("Expenses Tracking Tool")
 
-    # --- Tab Navigation ---
-    tab1, tab2, tab3 = st.tabs(["Dashboard", "Statement Input", "Settings"])
+    # --- State-aware Navigation using streamlit-option-menu ---
+    selected_tab = option_menu(
+        menu_title=None,  # required
+        options=["Dashboard", "Statement Input", "Settings"],
+        icons=['house', 'cloud-upload', 'gear'],  # optional
+        key="main_menu", # Use key for built-in state management
+        orientation="horizontal",
+    )
 
-    with tab1:
+    # --- Render Content based on Active Tab ---
+    if selected_tab == "Dashboard":
         dashboard_tab.render()
-
-    with tab2:
+    elif selected_tab == "Statement Input":
         statement_input_tab.render()
-
-    with tab3:
+    elif selected_tab == "Settings":
         settings_tab.render()
 
 if __name__ == "__main__":

@@ -177,6 +177,7 @@ dependencies = [
     { name = "requests" },
     { name = "sqlalchemy" },
     { name = "streamlit" },
+    { name = "streamlit-option-menu" },
 ]
 
 [package.metadata]
@@ -190,6 +191,7 @@ requires-dist = [
     { name = "requests", specifier = ">=2.32.3" },
     { name = "sqlalchemy", specifier = ">=2.0.41" },
     { name = "streamlit", specifier = ">=1.46.1" },
+    { name = "streamlit-option-menu" },
 ]
 
 [[package]]
@@ -831,6 +833,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/bd/7e/c7499c447b7021657fa5c851091072c1c7a26f1dda0369c21c0243fc35e7/streamlit-1.46.1.tar.gz", hash = "sha256:2cc4ad01cfeded9ad953a21829eb879b90aa77af4068c68397411c2d5c8862cf", size = 9651018, upload-time = "2025-06-26T16:03:05.66Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/84/3b/35400175788cdd6a43c90dce1e7f567eb6843a3ba0612508c0f19ee31f5f/streamlit-1.46.1-py3-none-any.whl", hash = "sha256:dffa373230965f87ccc156abaff848d7d731920cf14106f3b99b1ea18076f728", size = 10051346, upload-time = "2025-06-26T16:03:02.934Z" },
+]
+
+[[package]]
+name = "streamlit-option-menu"
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "streamlit" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5e/27/72dc451cdaef1714fd0d75cc430e50a06c12c9046295fdf1f94af1b766eb/streamlit-option-menu-0.4.0.tar.gz", hash = "sha256:48ec69d59e547fa2fa4bfae001620df8af56a80de2f765ddbb9fcbfb84017129", size = 827290, upload-time = "2024-10-09T14:51:01.685Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fd/52/2f525ad4262dc83d67297f69ec5afcee1438b9e9ae22aa318396725ddbed/streamlit_option_menu-0.4.0-py3-none-any.whl", hash = "sha256:a55fc7554047b6db371595af2182e435b8a2c715ee6124e8543685bd4670b07e", size = 829255, upload-time = "2024-10-09T14:50:59.707Z" },
 ]
 
 [[package]]
