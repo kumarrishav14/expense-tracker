@@ -1,40 +1,53 @@
 # Frontend Micro-Architecture: Dashboard Tab
 
 **Author:** AI Architect
-**Date:** July 18, 2025
+**Date:** July 24, 2025
 **Status:** Final
-**Version:** 1.1
+**Version:** 2.0
 
 ## 1. Component Overview
 
 This document provides the detailed micro-architecture for the **Dashboard Tab**. This tab serves as the main landing page, offering the user an at-a-glance overview of their financial status, key spending trends, and AI-powered insights.
 
-**Version 1.1 Update:** This version introduces the "Target Month" logic to intelligently display the most relevant data and a robust session-level caching strategy to improve performance and user experience.
+**Version 2.0 Update:** This version formalizes the **two-level caching strategy** and the **deferred rendering** of AI components to ensure a highly responsive user experience.
 
 This design adheres to the principles outlined in the main `frontend_micro_architecture.md` and `system_architecture.md` documents.
 
 ## 2. Responsibilities
 
--   **Handle the "cold start" or empty state** by displaying a welcoming message when no transaction data is present.
--   **Intelligently determine the month to display** based on the most recent available transaction data (the "Target Month").
--   **Conditionally display an alert** if the data being shown is not from the current calendar month.
+-   Handle the "cold start" or empty state by displaying a welcoming message when no transaction data is present.
+-   Intelligently determine the month to display based on the most recent available transaction data (the "Target Month").
+-   Conditionally display an alert if the data being shown is not from the current calendar month.
 -   Display high-level Key Performance Indicators (KPIs) for the Target Month.
 -   Present a clear visualization of expenses by category for the Target Month.
 -   Show a historical view of spending over the last few months.
--   Render a concise, AI-generated summary of spending patterns and actionable insights.
+-   **Deferredly render** the AI-generated summary to avoid blocking the initial dashboard load.
 -   Provide a list of the most recent transactions for immediate context.
--   Ensure the dashboard is clean, easy to read, and loads efficiently.
+-   Ensure the dashboard is clean, easy to read, and loads efficiently by employing a robust, multi-level caching strategy.
 
-## 3. State Management: Intelligent Session Caching
+## 3. Caching Strategy: Two-Level System
 
-To ensure a fast user experience, the dashboard will employ an intelligent, session-level caching strategy. The goal is to run the expensive `Dashboard Processor` only when absolutely necessary.
+To ensure a fast and responsive user experience, the dashboard employs a two-level caching system.
 
--   `st.session_state.dashboard_data`: A dictionary or dataclass holding all the data required for rendering (KPIs, chart data, AI insights, and display month info). This is the primary data cache.
--   `st.session_state.last_transaction_timestamp`: The timestamp of the most recent transaction that was used to generate the data in the cache. This is the key to the cache invalidation logic.
+### Level 1: Manual Session Caching (Core Data)
+This cache stores the primary data required for rendering the main dashboard (KPIs, chart data, etc.).
+
+-   **Mechanism:** Uses `st.session_state` to hold the data (`st.session_state.dashboard_data`).
+-   **Cache Invalidation:** This cache is invalidated **manually**. The UI fetches the `last_transaction_timestamp` from the database on each run. If this timestamp differs from the one stored in the session state, the cache is considered stale, and the core data is re-processed. This is a highly efficient, targeted invalidation scheme.
+
+### Level 2: Automated Function Caching (AI Insights)
+This cache stores the results of the expensive AI insight generation call.
+
+-   **Mechanism:** Uses Streamlit's built-in **`@st.cache_data`** decorator on the function that calls the AI processor.
+-   **Cache Invalidation:** This cache is invalidated **automatically** by Streamlit. Before executing the function, Streamlit creates a hash of its inputs, including:
+    1.  The input arguments to the function (in this case, the `ai_insight_data` DataFrame).
+    2.  The code of the decorated function itself.
+    3.  The code of any functions used inside the decorated function.
+-   If this hash matches the hash from a previous run, Streamlit skips the function execution and returns the cached result instantly. If the hash is different (e.g., the input data has changed), the function is executed, and its result is cached for future use.
 
 ## 4. Component Logic and Sequence
 
-This sequence outlines the complete data loading and rendering logic, incorporating the cold start, target month, and cache invalidation checks.
+This sequence outlines the deferred rendering and two-level caching logic.
 
 ```mermaid
 sequenceDiagram
@@ -43,9 +56,7 @@ sequenceDiagram
     participant Processor as Dashboard Processor
     participant DB as DB Interface
 
-
     User->>+UI: 1. Navigates to Dashboard Tab
-
 
     alt Cold Start Check
         UI->>+DB: 2. Get transaction count
@@ -55,25 +66,31 @@ sequenceDiagram
         end
     end
 
-
-    Note over UI: Checks if cache is valid...
+    Note over UI: **Level 1 Cache Check**
     UI->>+DB: 5. Get latest transaction timestamp
     DB-->>-UI: 6. Returns timestamp
 
-
     alt If UI.cache_timestamp == DB.latest_timestamp
-        UI-->>User: 7. Render dashboard from session_state cache (Instant).
+        UI-->>User: 7. Render main dashboard from session_state cache (Instant).
     else
-        Note over UI: Cache is stale. Trigger full refresh.
-        UI->>+Processor: 8. process_dashboard_data()
-        Processor->>Processor: 9. Determine Target Month from latest data
-        Note over Processor: Performs all aggregations and AI calls for Target Month.
-        Processor-->>-UI: 10. Returns complete dashboard_data object
-        Note over UI: Caches new data and the latest timestamp.
-        UI-->>User: 11. Renders fresh dashboard.
-        alt If Target Month is not current month
-            UI-->>User: 12. Display info alert: "Showing data for [Target Month]"
-        end
+        Note over UI: Cache is stale. Refresh core data.
+        UI->>+Processor: 8. process_dashboard_data(include_ai_insight=False)
+        Processor-->>-UI: 9. Returns core dashboard_data
+        Note over UI: Caches new core data and timestamp.
+        UI-->>User: 10. Renders fresh main dashboard.
+    end
+
+    Note over UI: **Level 2 Cache Check (Deferred AI Section)**
+    UI->>UI: 11. Call generate_cached_ai_insight()
+    Note over UI: Streamlit checks @st.cache_data hash.
+    alt If cache hit
+         UI-->>User: 12. Render AI insights from cache (Instant).
+    else
+        Note over UI: Cache miss. Execute function.
+        UI->>+Processor: 13. get_ai_insight()
+        Processor-->>-UI: 14. Returns AI insight data
+        Note over UI: Streamlit caches the result.
+        UI-->>User: 15. Renders fresh AI insights.
     end
 ```
 
@@ -95,9 +112,8 @@ sequenceDiagram
 -   **Implementation:** Use `st.bar_chart`.
 
 ### 5.4. AI-Powered Insights
--   **Description:** A small, text-based section to display the AI-generated overview and insights.
--   **Required Data:** A JSON object or dictionary with `overview` and `insights` keys, as returned by the `Dashboard Processor`.
--   **Implementation:** Use `st.info` for the overview and `st.markdown` for the bulleted list of insights.
+-   **Description:** A text-based section to display the AI-generated overview and insights.
+-   **Implementation:** This component is rendered **deferredly** (after the main dashboard) to ensure a fast initial load. The data generation for this component is wrapped in a **`@st.cache_data`** function to prevent re-computation on every render.
 
 ### 5.5. Recent Transactions
 -   **Description:** A simple, scrollable table showing the 5-10 most recent transactions.
@@ -116,5 +132,5 @@ This approach prevents sending excessive data to the LLM, ensuring performance a
 
 ## 7. Error Handling
 
--   If the `Dashboard Processor` fails, the UI should display a user-friendly error message (e.g., "Could not load dashboard data. Please try again later.").
--   If the AI Backend call specifically fails, the `Dashboard Processor` should gracefully handle it by returning the rest of the dashboard data with an empty `insights` section. The UI should then render the dashboard without the AI component, ensuring the user can still see their core financial data.
+-   If the main `Dashboard Processor` fails, the UI should display a user-friendly error message (e.g., "Could not load dashboard data. Please try again later.").
+-   If the cached AI insight generation function fails, it should return an error object. The UI will check for this and display a specific error message for the AI section (e.g., "Could not generate AI insight at this time.") without crashing the rest of the dashboard.

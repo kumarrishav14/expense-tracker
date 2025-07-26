@@ -8,6 +8,7 @@ overview of the user's financial status.
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from typing import Optional
 
 from core.processors.dashboard_processor import DashboardProcessor
 from core.database.db_interface import DatabaseInterface
@@ -55,7 +56,7 @@ def render():
     with col1:
         st.subheader("Expenses by Category")
         category_data = data.get("category_chart_data")
-        if not category_data.empty:
+        if category_data is not None and not category_data.empty:
             fig = px.pie(category_data, names='category', values='amount', hole=0.3)
             st.plotly_chart(fig, use_container_width=True)
         else:
@@ -64,7 +65,7 @@ def render():
     with col2:
         st.subheader("Spending Over Time")
         spending_data = data.get("spending_over_time_data")
-        if not spending_data.empty:
+        if spending_data is not None and not spending_data.empty:
             st.bar_chart(spending_data, x='month', y='amount', use_container_width=True)
         else:
             st.write("No spending data available.")
@@ -78,20 +79,35 @@ def render():
     recent_transactions = data.get("recent_transactions")
     st.dataframe(recent_transactions, use_container_width=True, hide_index=True)
 
-def _render_ai_insight_section(ai_insight_data: pd.DataFrame):
-    """Renders the AI insight section, showing a spinner while processing."""
+
+@st.cache_data
+def generate_cached_ai_insight(ai_insight_data: pd.DataFrame) -> dict:
+    """
+    Generates AI insights for the given data. The results of this function
+    are cached by Streamlit.
+    """
+    try:
+        processor = DashboardProcessor()
+        return processor.get_ai_insight(ai_insight_data)
+    except Exception as e:
+        # Return a dictionary to indicate error, which will also be cached
+        return {"error": str(e)}
+
+
+def _render_ai_insight_section(ai_insight_data: Optional[pd.DataFrame]):
+    """Renders the AI insight section using the cached function."""
     st.subheader("AI Insights")
     if ai_insight_data is None or ai_insight_data.empty:
         st.info("Not enough data available to generate AI insights for this period.")
         return
 
     with st.spinner("🤖 Generating AI insight..."):
-        try:
-            processor = DashboardProcessor()
-            ai_insights = processor.get_ai_insight(ai_insight_data)
-            
+        # Call the new cached function instead of the processor directly
+        ai_insights = generate_cached_ai_insight(ai_insight_data)
+
+        if "error" in ai_insights:
+            st.error(f"Could not generate AI insight: {ai_insights['error']}")
+        else:
             st.info(ai_insights.get("overview", ""))
             for insight in ai_insights.get("insights", []):
                 st.markdown(f"- {insight}")
-        except Exception as e:
-            st.error(f"Could not generate AI insight: {e}")
