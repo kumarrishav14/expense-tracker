@@ -26,19 +26,22 @@ class DashboardProcessor:
             data_csv = recent_data_slice.to_csv(index=False)
 
             prompt = f"""
-            You are a financial analyst AI. Your task is to provide a brief, encouraging overview of the user's spending and identify 1-2 novel, actionable insights based on the provided data.
+            You are a financial analyst AI. Your task is to provide a brief, encouraging overview of the user's spending and identify 1-2 novel, actionable insights based on their recent spending data.
 
             Instructions:
             1.  For the overview, use the provided financial summary. Keep it positive and brief.
-            2.  For the insights, analyze the raw transaction data to find patterns or anomalies that are not obvious from the summary alone.
-            3.  Return a single, valid JSON object with two keys: "overview" (a string) and "insights" (a list of strings).
+            2.  For the insights, analyze the raw expenses transaction data to find patterns or anomalies that are not obvious from the summary alone.
+            3.  The provided data represents expenses only. All amounts are negative (debits).
+            4.  Return a single, valid JSON object with two keys: "overview" (a string) and "insights" (a list of strings).
+
+            **All transactions are in indian rupees.**
 
             Financial Summary:
             ```json
             {summary_json}
             ```
 
-            Raw Transaction Data (last 90 days):
+            Spending Data (last 90 days):
             ---
             {data_csv}
             ---
@@ -65,16 +68,22 @@ class DashboardProcessor:
         if transactions_df.empty:
             return {"overview": "Not enough data for insights.", "insights": []}
 
+        # Create a new DataFrame containing only expenses (debits)
+        expense_df = transactions_df[transactions_df['amount'] < 0].copy()
+
+        if expense_df.empty:
+            return {"overview": "No spending data available for insights.", "insights": []}
+
         # This is a simplified summary for the prompt, can be enhanced
-        total_spend = transactions_df[transactions_df['amount'] < 0]['amount'].abs().sum()
-        top_category = transactions_df.groupby('category')['amount'].sum().nlargest(1).index[0] if not transactions_df.empty else "N/A"
+        total_spend = expense_df['amount'].abs().sum()
+        top_category = expense_df.groupby('category')['amount'].sum().nlargest(1).index[0]
 
         financial_summary = {
             "total_spend": total_spend,
             "top_spending_category": top_category,
         }
 
-        return self._generate_ai_insights(financial_summary, transactions_df)
+        return self._generate_ai_insights(financial_summary, expense_df)
 
     def process_dashboard_data(self, transactions_df: pd.DataFrame, include_ai_insight: bool = True) -> Dict[str, Any]:
         """
