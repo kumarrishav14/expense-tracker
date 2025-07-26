@@ -11,10 +11,12 @@ Available Strategies:
 
 from .abstract_processor import AbstractDataProcessor
 from .ai_data_processor import AIDataProcessor
+from .enhanced_ai_data_processor import EnhancedAIDataProcessor
 from .rule_based_data_processor import RuleBasedDataProcessor
 
 __all__ = [
     'AbstractDataProcessor',
     'AIDataProcessor',
+    'EnhancedAIDataProcessor',
     'RuleBasedDataProcessor'
 ]

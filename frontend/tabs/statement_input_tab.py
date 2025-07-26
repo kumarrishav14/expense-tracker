@@ -11,7 +11,7 @@ import io
 
 from core.parsers.csv_parser import parse_csv_file
 from core.parsers.pdf_parser import is_pdf_encrypted, parse_pdf
-from core.processors import AIDataProcessor
+from core.processors import EnhancedAIDataProcessor
 from core.database.db_interface import DatabaseInterface
 
 def render():
@@ -55,7 +55,7 @@ def render():
                         raw_df = parse_csv_file(file_stream)
                     
                     # Instantiate with debugging off for production UI
-                    processor = AIDataProcessor(debug=False)
+                    processor = EnhancedAIDataProcessor(debug=False)
                     processed_df = processor.process_raw_data(
                         raw_df, 
                         on_progress=update_progress_in_ui
@@ -65,7 +65,7 @@ def render():
                     st.session_state.upload_error = None # Clear previous errors
                     progress_bar.progress(1.0, text="Processing complete!")
 
-                except ValueError as e:
+                except (ValueError, RuntimeError) as e:
                     st.session_state.upload_error = str(e)
                     st.session_state.processed_df = None # Clear previous results
                     progress_bar.progress(1.0, text="An error occurred.")

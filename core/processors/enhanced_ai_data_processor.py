@@ -379,13 +379,14 @@ class EnhancedAIDataProcessor(AbstractDataProcessor):
             print(f"\n{DebugColors.LLM_OUTPUT}{'='*50}\n[PASS 3: LLM RAW OUTPUT]\n{'='*50}\n{llm_response}{DebugColors.ENDC}")
 
         try:
-            parsed_json = json.loads(llm_response)
+            response = self._strip_codefence(llm_response)
+            parsed_json = json.loads(response)
             if not isinstance(parsed_json, list) or len(parsed_json) != len(batch_df):
                 raise ValueError("LLM did not return a valid JSON array of the correct length.")
             return parsed_json
         except (json.JSONDecodeError, ValueError) as e:
-            print(f"Skipping batch due to categorization error: {e}")
-            return [] # Return empty list to skip the batch
+            # Re-raise as a specific error to be handled by the retry loop
+            raise ValueError(f"Failed to process categorization batch: {e}") from e
 
     def _execute_pass_3_categorization(self, mapped_df: pd.DataFrame, on_progress: Optional[Callable[[float, str], None]]) -> pd.DataFrame:
         """
@@ -420,10 +421,11 @@ class EnhancedAIDataProcessor(AbstractDataProcessor):
                     break # Success
                 except Exception as e:
                     retries += 1
-                    print(f"Error processing batch {i+1}, attempt {retries}/{MAX_RETRIES+1}: {e}")
+                    if self._debug:
+                        print(f"Error processing batch {i+1}, attempt {retries}/{MAX_RETRIES+1}: {e}")
                     if retries > MAX_RETRIES:
-                        print(f"Failed to process batch {i+1} after {MAX_RETRIES} retries. Skipping.")
-                        break
+                        # Halt on final failure
+                        raise RuntimeError(f"Failed to process batch {i+1} after {MAX_RETRIES+1} attempts. Halting processing.") from e
         
         if not all_results:
             return pd.DataFrame()
