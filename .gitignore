@@ -35,11 +35,10 @@ pytest.ini
 sample_transactions.csv
 
 # Temporary files
-temp_prompt_tuning.py
+# temp_prompt_tuning.py
 tmp_rovodev_ollama_architecture_review.md
 
 # Planning files
 planning/*.mmd
-prompts
 *.csv
-enhanced*
+*_idea.md
