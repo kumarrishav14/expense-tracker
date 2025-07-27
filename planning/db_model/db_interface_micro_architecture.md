@@ -1,8 +1,14 @@
 # Database Interface Micro-Architecture
 
+**Author:** AI Architect
+**Date:** July 24, 2025
+**Version:** 2.0
+
 ## **Component Overview**
 
 The `db_interface` component serves as the **Simple Data Access Layer** in the personal expense tracking system. It provides clean, filtered access to raw data and handles data persistence, while leaving all business logic and data processing to individual components.
+
+**Version 2.0 Update:** This version incorporates the new `Account`, `CardStatement`, and `Transfer` entities required for the transfer-matching feature. The interface is expanded to manage these new data models while maintaining its core responsibility of being a simple data access layer.
 
 ## **Position in System Architecture**
 
@@ -65,11 +71,16 @@ The `db_interface` component serves as the **Simple Data Access Layer** in the p
 ```python
 transactions_df: pd.DataFrame
 Columns:
-├─ description: str (optional, transaction description)
-├─ amount: float (required, transaction amount)
-├─ transaction_date: datetime (required, when transaction occurred)
-├─ category: str (optional, main category name)
-└─ sub_category: str (optional, sub-category name)
+├─ id: int (PK)
+├─ description: str (optional)
+├─ amount: float (required)
+├─ transaction_date: datetime (required)
+├─ category: str (optional)
+├─ sub_category: str (optional)
+├─ account_id: int (FK)
+├─ statement_id: int (optional, FK)
+├─ is_transfer: bool
+└─ transfer_id: int (optional, FK)
 
 Usage: Raw data for all UI components to process as needed
 ```
@@ -78,10 +89,37 @@ Usage: Raw data for all UI components to process as needed
 ```python
 categories_df: pd.DataFrame
 Columns:
-├─ name: str (category name)
-└─ parent_category: str (parent name, null for top-level)
+├─ id: int (PK)
+├─ name: str
+└─ parent_category: str (optional)
 
 Usage: Raw category hierarchy for components to analyze and display
+```
+
+#### **3. Accounts DataFrame**
+```python
+accounts_df: pd.DataFrame
+Columns:
+├─ id: int (PK)
+├─ name: str
+├─ account_type: str
+├─ bank_name: str (optional)
+└─ account_number_last4: str (optional)
+
+Usage: Provides a list of all user-defined accounts.
+```
+
+#### **4. Card Statements DataFrame**
+```python
+card_statements_df: pd.DataFrame
+Columns:
+├─ id: int (PK)
+├─ account_id: int (FK)
+├─ statement_date: date
+├─ total_due: float (optional)
+└─ status: str (e.g., 'UNPAID', 'PARTIALLY_PAID', 'PAID')
+
+Usage: Provides metadata for each credit card statement.
 ```
 
 **Note**: All analysis, aggregations, insights, and complex processing are handled by individual UI components, not by db_interface.
@@ -95,35 +133,71 @@ class DatabaseInterface:
     """Simple data access layer providing raw data with basic filtering"""
     
     # Core Data Management
-    def __init__(self, db_url: str)
-    def get_session(self) -> Session
+    def __init__(self, db_url: str):
+        """Initializes the interface with the database URL."""
+
+    def get_session(self) -> Session:
+        """Provides a database session for operations."""
     
-    # Raw Data Access Methods (Database → DataFrames)
-    def get_transactions_table(
-        self,
-        date_range: Tuple[date, date] = None,
-        categories: List[str] = None,
-        amount_range: Tuple[float, float] = None,
-        limit: int = None
-    ) -> pd.DataFrame
+    # --- Raw Data Access Methods (Database → DataFrames) ---
+    def get_transactions_table(self, ...) -> pd.DataFrame:
+        """Returns a DataFrame of transactions with optional filters."""
+
+    def get_categories_table(self) -> pd.DataFrame:
+        """Returns a DataFrame of all expense categories."""
+
+    def get_accounts_table(self, only_active: bool = False) -> pd.DataFrame:
+        """Returns a DataFrame of all user-defined accounts, with an option to filter for only active ones."""
+
+    def get_card_statements_table(self) -> pd.DataFrame:
+        """Returns a DataFrame of all credit card statement metadata."""
     
-    def get_categories_table(self) -> pd.DataFrame
-    
-    # Data Persistence Methods (DataFrames → Database)
-    def save_transactions_table(self, df: pd.DataFrame) -> OperationResult
-    def save_categories_table(self, df: pd.DataFrame) -> OperationResult
-    
+    # --- Data Persistence Methods (DataFrames → Database) ---
+    def save_transactions_table(self, df: pd.DataFrame) -> OperationResult:
+        """Saves a DataFrame of transactions to the database."""
+
+    def save_categories_table(self, df: pd.DataFrame) -> OperationResult:
+        """Saves a DataFrame of categories to the database."""
+
+    def save_accounts_table(self, df: pd.DataFrame) -> OperationResult:
+        """Saves a DataFrame of new accounts to the database."""
+
+    def update_account(self, account_id: int, new_data: dict) -> OperationResult:
+        """Updates an existing account (e.g., to change its name or set is_active=False)."""
+
+    def save_card_statements_table(self, df: pd.DataFrame) -> OperationResult:
+        """Saves a DataFrame of new card statements to the database."""
+
+    # --- Transfer Matching Specific Methods ---
+    def link_transfer(self, payment_transaction_id: int, statement_id: int) -> OperationResult:
+        """Creates an auditable record in the 'transfers' table to link a bank payment to a card statement."""
+
+    def flag_transaction_as_transfer(self, transaction_id: int, transfer_id: int) -> OperationResult:
+        """Updates a single transaction to mark it as a transfer by setting the 'is_transfer' flag and linking it to the 'transfers' table."""
+
+    def update_statement_status(self, statement_id: int, new_status: str) -> OperationResult:
+        """Updates the status of a card statement (e.g., to 'PAID' or 'PARTIALLY_PAID')."""
+
     # Batch operations with detailed error reporting
-    def save_transactions_batch(self, df: pd.DataFrame) -> BatchOperationResult
+    def save_transactions_batch(self, df: pd.DataFrame) -> BatchOperationResult:
+        """Saves a batch of transactions with detailed error reporting."""
     
     # Category Management
-    def create_category_hierarchy(self, category: str, sub_category: str) -> bool
-    def bulk_categorize_transactions(self, predictions_df: pd.DataFrame) -> OperationResult
+    def create_category_hierarchy(self, category: str, sub_category: str) -> bool:
+        """Creates a category and sub-category hierarchy if it doesn't exist."""
+
+    def bulk_categorize_transactions(self, predictions_df: pd.DataFrame) -> OperationResult:
+        """Updates the category for a batch of transactions based on AI predictions."""
     
     # Transaction Management
-    def begin_transaction(self) -> TransactionContext
-    def rollback_transaction(self, context: TransactionContext)
-    def commit_transaction(self, context: TransactionContext)
+    def begin_transaction(self) -> TransactionContext:
+        """Begins a new transaction context for atomic operations."""
+
+    def rollback_transaction(self, context: TransactionContext):
+        """Rolls back the operations within the given transaction context."""
+
+    def commit_transaction(self, context: TransactionContext):
+        """Commits the operations within the given transaction context."""
 ```
 
 ### **Internal Data Flow**
@@ -430,7 +504,7 @@ Note: Multi-user support removed - this is a personal app
 
 ---
 
-**Document Version**: 1.0  
-**Last Updated**: 2025-01-02  
-**Component Phase**: Core Implementation  
-**Dependencies**: system_architecture.md, db_interface_architecture.md
+**Document Version**: 2.0  
+**Last Updated**: 2025-07-24  
+**Component Phase**: Draft  
+**Dependencies**: system_architecture.md, schema_architecture.md

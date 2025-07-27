@@ -1,8 +1,14 @@
 # Database Manager Micro-Architecture
 
+**Author:** AI Architect
+**Date:** July 24, 2025
+**Version:** 2.0
+
 ## **Component Overview**
 
 The `db_manager` component serves as the **Database Operations Layer** that handles session management and CRUD operations. It sits between `db_interface` and the SQLAlchemy models, providing atomic database operations with proper transaction management.
+
+**Version 2.0 Update:** This version expands the `db_manager` to include CRUD operations for the new `Account`, `CardStatement`, and `Transfer` entities.
 
 ## **Position in System Architecture**
 
@@ -116,45 +122,47 @@ def update_transactions_batch(self, updates: List[dict]) -> List[model.Transacti
 class Database:
     """Enhanced database operations with transaction support"""
     
-    # Current - Session Management (Keep)
+    # --- Session and Transaction Management ---
     def __init__(self, db_url: str = "sqlite:///expenses.db")
-    def get_session(self) -> Session  # For simple operations
-    
-    # New - Transaction Management
+    def get_session(self) -> Session
     @contextmanager
-    def transaction_scope(self) -> Session  # For atomic operations
-    def begin_transaction(self) -> Session
-    def commit_transaction(self, session: Session)
-    def rollback_transaction(self, session: Session)
-    
-    # Current - Individual CRUD (Keep)
+    def transaction_scope(self) -> Session
+
+    # --- CRUD for Categories ---
     def create_category(self, name: str, parent_id: Optional[int] = None) -> model.Category
+    # ... other category CRUD methods
+
+    # --- CRUD for Transactions ---
     def create_transaction(self, amount: float, ...) -> model.Transaction
-    # ... other individual CRUD methods
-    
-    # New - Batch Operations (Required for db_interface)
-    def create_transactions_batch(
-        self, 
-        transactions_data: List[dict], 
-        session: Optional[Session] = None
-    ) -> List[model.Transaction]
-    
-    def create_categories_batch(
-        self, 
-        categories_data: List[dict], 
-        session: Optional[Session] = None
-    ) -> List[model.Category]
-    
-    # New - Query Operations with Session Control
-    def get_transactions_filtered(
-        self,
-        date_range: Optional[Tuple[date, date]] = None,
-        categories: Optional[List[str]] = None,
-        amount_range: Optional[Tuple[float, float]] = None,
-        session: Optional[Session] = None
-    ) -> List[model.Transaction]
-    
-    # New - Error Handling
+    def get_transactions_filtered(self, ...) -> List[model.Transaction]
+    def create_transactions_batch(self, ...) -> List[model.Transaction]
+    def update_transaction(self, transaction_id: int, ...) -> model.Transaction:
+
+    # --- CRUD for Accounts ---
+    def create_account(self, name: str, account_type: str, ...) -> model.Account:
+    def get_account(self, account_id: int) -> model.Account:
+    def get_all_accounts(self) -> List[model.Account]:
+    def update_account(self, account_id: int, ...) -> model.Account:
+
+    # --- CRUD for Card Statements ---
+    def create_card_statement(self, account_id: int, ...) -> model.CardStatement:
+    def get_card_statement(self, statement_id: int) -> model.CardStatement:
+    def update_card_statement(self, statement_id: int, ...) -> model.CardStatement:
+
+    # --- CRUD for Transfers ---
+    def create_transfer(self, payment_transaction_id: int, statement_id: int) -> model.Transfer:
+
+    # --- Admin & Utility Script Methods ---
+    # These methods are NOT to be exposed via the db_interface and should only be
+    # used by privileged, standalone scripts like utility.py for dev/admin tasks.
+    def hard_delete_account(self, account_id: int) -> OperationResult:
+        """
+        Performs a hard delete of an account and its dependencies.
+        This is a destructive operation and is not intended for application use.
+        It first re-assigns or nullifies child records before deleting the account.
+        """
+
+    # --- Error Handling ---
     def handle_constraint_error(self, error: Exception) -> dict
     def is_retryable_error(self, error: Exception) -> bool
 ```
@@ -370,8 +378,8 @@ Impact Assessment:
 
 ---
 
-**Document Version**: 1.0  
-**Last Updated**: 2025-01-02  
-**Component Phase**: Enhancement Required  
-**Dependencies**: system_architecture.md, db_interface_micro_architecture.md  
+**Document Version**: 2.0  
+**Last Updated**: 2025-07-24  
+**Component Phase**: Draft  
+**Dependencies**: system_architecture.md, schema_architecture.md  
 **Status**: Current implementation needs transaction management enhancements
