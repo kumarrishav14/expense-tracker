@@ -7,7 +7,7 @@ and batch operations for atomic database operations.
 import datetime
 import pytz
 from contextlib import contextmanager
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Generator
 
 import streamlit as st
 from sqlalchemy import create_engine
@@ -93,12 +93,13 @@ class Database:
         if "db_session" not in st.session_state:
             st.session_state.db_session = self._session_local()
         return st.session_state.db_session
-    
+
     @contextmanager
-    def transaction_scope(self) -> Session:
+    def transaction_scope(self) -> 'Generator[Session, None, None]':
         """
         Provides a transactional scope around a series of operations.
-        Uses the main application session with transaction control for data consistency.
+        This creates a new, isolated session for the transaction to ensure
+        atomicity and proper rollback without affecting the main UI session.
         
         Usage:
             with db.transaction_scope() as session:
@@ -430,8 +431,12 @@ class Database:
         self,
         amount: float,
         transaction_date: datetime.datetime,
+        account_id: int,
         description: Optional[str] = None,
         category_id: Optional[int] = None,
+        statement_id: Optional[int] = None,
+        is_transfer: bool = False,
+        transfer_id: Optional[int] = None,
         session: Optional[Session] = None,
     ) -> model.Transaction:
         """
@@ -440,8 +445,12 @@ class Database:
         Args:
             amount (float): The amount of the transaction.
             transaction_date (datetime.datetime): The date and time of the transaction.
+            account_id (int): The ID of the account for this transaction.
             description (Optional[str]): A description for the transaction.
             category_id (Optional[int]): The ID of the category for this transaction.
+            statement_id (Optional[int]): The ID of the statement for this transaction.
+            is_transfer (bool): Whether this transaction is a transfer.
+            transfer_id (Optional[int]): The ID of the transfer for this transaction.
             session (Optional[Session]): Database session to use. If None, uses get_session().
 
         Returns:
@@ -451,8 +460,12 @@ class Database:
         db_transaction = model.Transaction(
             amount=amount,
             transaction_date=transaction_date,
+            account_id=account_id,
             description=description,
             category_id=category_id,
+            statement_id=statement_id,
+            is_transfer=is_transfer,
+            transfer_id=transfer_id,
             created_at=datetime.datetime.now(indian_timezone),
         )
         db.add(db_transaction)
@@ -513,21 +526,15 @@ class Database:
     def update_transaction(
         self,
         transaction_id: int,
-        amount: float,
-        transaction_date: datetime.datetime,
-        description: Optional[str] = None,
-        category_id: Optional[int] = None,
+        new_data: Dict[str, Any],
         session: Optional[Session] = None,
     ) -> Optional[model.Transaction]:
         """
-        Updates an existing transaction.
+        Updates an existing transaction from a dictionary of new data.
 
         Args:
             transaction_id (int): The ID of the transaction to update.
-            amount (float): The new amount for the transaction.
-            transaction_date (datetime.datetime): The new date for the transaction.
-            description (Optional[str]): The new description for the transaction.
-            category_id (Optional[int]): The new category ID for the transaction.
+            new_data (Dict[str, Any]): A dictionary containing the new data.
             session (Optional[Session]): Database session to use. If None, uses get_session().
 
         Returns:
@@ -536,10 +543,8 @@ class Database:
         db = session if session is not None else self.get_session()
         db_transaction = db.query(model.Transaction).filter(model.Transaction.id == transaction_id).first()
         if db_transaction:
-            db_transaction.amount = amount
-            db_transaction.transaction_date = transaction_date
-            db_transaction.description = description
-            db_transaction.category_id = category_id
+            for key, value in new_data.items():
+                setattr(db_transaction, key, value)
             db_transaction.updated_at = datetime.datetime.now(indian_timezone)
             
             # Only commit if we're managing our own session
@@ -654,3 +659,71 @@ class Database:
         results = query.all()
         print(f"DEBUG: Parent category query returned {len(results)} categories")
         return results
+
+    # --- Account CRUD Methods ---
+    def create_account(self, name: str, account_type: str, bank_name: Optional[str] = None, account_number_last4: Optional[str] = None, file_fingerprint: Optional[str] = None, session: Optional[Session] = None) -> model.Account:
+        db = session if session is not None else self.get_session()
+        db_account = model.Account(
+            name=name, 
+            account_type=account_type, 
+            bank_name=bank_name, 
+            account_number_last4=account_number_last4,
+            file_fingerprint=file_fingerprint
+        )
+        db.add(db_account)
+        if session is None: db.commit(); db.refresh(db_account)
+        else: db.flush(); db.refresh(db_account)
+        return db_account
+
+    def get_account(self, account_id: int, session: Optional[Session] = None) -> Optional[model.Account]:
+        db = session if session is not None else self.get_session()
+        return db.query(model.Account).filter(model.Account.id == account_id).first()
+
+    def get_all_accounts(self, only_active: bool = False, session: Optional[Session] = None) -> List[model.Account]:
+        db = session if session is not None else self.get_session()
+        query = db.query(model.Account)
+        if only_active:
+            query = query.filter(model.Account.is_active == True)
+        return query.all()
+
+    def update_account(self, account_id: int, new_data: Dict[str, Any], session: Optional[Session] = None) -> Optional[model.Account]:
+        db = session if session is not None else self.get_session()
+        db_account = db.query(model.Account).filter(model.Account.id == account_id).first()
+        if db_account:
+            for key, value in new_data.items():
+                setattr(db_account, key, value)
+            db_account.updated_at = datetime.datetime.now(indian_timezone)
+            if session is None: db.commit(); db.refresh(db_account)
+        return db_account
+
+    # --- CardStatement CRUD Methods ---
+    def create_card_statement(self, account_id: int, statement_date: datetime.date, total_due: Optional[float] = None, status: str = 'UNPAID', session: Optional[Session] = None) -> model.CardStatement:
+        db = session if session is not None else self.get_session()
+        db_statement = model.CardStatement(account_id=account_id, statement_date=statement_date, total_due=total_due, status=status)
+        db.add(db_statement)
+        if session is None: db.commit(); db.refresh(db_statement)
+        else: db.flush(); db.refresh(db_statement)
+        return db_statement
+
+    def get_card_statement(self, statement_id: int, session: Optional[Session] = None) -> Optional[model.CardStatement]:
+        db = session if session is not None else self.get_session()
+        return db.query(model.CardStatement).filter(model.CardStatement.id == statement_id).first()
+
+    def update_card_statement(self, statement_id: int, new_data: Dict[str, Any], session: Optional[Session] = None) -> Optional[model.CardStatement]:
+        db = session if session is not None else self.get_session()
+        db_statement = db.query(model.CardStatement).filter(model.CardStatement.id == statement_id).first()
+        if db_statement:
+            for key, value in new_data.items():
+                setattr(db_statement, key, value)
+            db_statement.updated_at = datetime.datetime.now(indian_timezone)
+            if session is None: db.commit(); db.refresh(db_statement)
+        return db_statement
+
+    # --- Transfer CRUD Methods ---
+    def create_transfer(self, payment_transaction_id: int, statement_id: int, matched_rule: Optional[str] = None, session: Optional[Session] = None) -> model.Transfer:
+        db = session if session is not None else self.get_session()
+        db_transfer = model.Transfer(payment_transaction_id=payment_transaction_id, statement_id=statement_id, matched_rule=matched_rule)
+        db.add(db_transfer)
+        if session is None: db.commit(); db.refresh(db_transfer)
+        else: db.flush(); db.refresh(db_transfer)
+        return db_transfer

@@ -13,7 +13,7 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from .db_manager import Database
-from .model import Category, Transaction
+from .model import Category, Transaction, Account, CardStatement, Transfer
 
 # Set the timezone to Indian Standard Time
 indian_timezone = pytz.timezone("Asia/Kolkata")
@@ -21,42 +21,7 @@ indian_timezone = pytz.timezone("Asia/Kolkata")
 
 class DatabaseInterface:
     """
-    Simplified interface for converting between pandas DataFrames and database tables.
-    
-    This interface provides a clean abstraction layer where other components work with
-    denormalized pandas DataFrames (no foreign keys), while all SQL relationship 
-    complexity is handled internally using atomic transactions.
-    
-    Key Features:
-    - Denormalized DataFrames with human-readable category/sub_category columns
-    - Atomic transaction support for reliable batch operations
-    - Automatic category hierarchy creation
-    - Comprehensive error handling with rollback support
-    - Clean separation from SQL implementation details
-    
-    Data Structure:
-    - Categories: [name, parent_category] - for UX components
-    - Transactions: [description, amount, transaction_date, category, sub_category]
-    
-    Category Hierarchy Logic:
-    - If sub_category exists: category=parent_name, sub_category=child_name
-    - If no sub_category: category=category_name, sub_category=blank
-    
-    Usage Examples:
-        # Initialize interface
-        db_interface = DatabaseInterface()
-        
-        # Export data for analysis
-        categories_df = db_interface.get_categories_table()
-        transactions_df = db_interface.get_transactions_table()
-        
-        # Import data with automatic category creation
-        success = db_interface.save_transactions_table(cleaned_df)
-        if not success:
-            print("Import failed - check logs for details")
-        
-        # Create category hierarchies for UX
-        success = db_interface.create_category_hierarchy("Food", "Restaurants")
+    Simplified interface for database operations.
     """
     
     def __init__(self, db_url: str = "sqlite:///expenses.db"):
@@ -68,7 +33,74 @@ class DatabaseInterface:
         """
         self.db = Database(db_url)
     
-    # --- Export methods (DB to pandas) ---
+    # --- Account Management ---
+    def get_accounts_table(self, only_active: bool = False) -> pd.DataFrame:
+        accounts = self.db.get_all_accounts(only_active=only_active)
+        if not accounts:
+            return pd.DataFrame(columns=['id', 'name', 'account_type', 'bank_name', 'account_number_last4', 'is_active'])
+        data = [{
+            'id': acc.id, 'name': acc.name, 'account_type': acc.account_type, 'bank_name': acc.bank_name, 
+            'account_number_last4': acc.account_number_last4, 'is_active': acc.is_active
+        } for acc in accounts]
+        return pd.DataFrame(data)
+
+    def save_accounts_table(self, df: pd.DataFrame) -> bool:
+        try:
+            with self.db.transaction_scope() as session:
+                for _, row in df.iterrows():
+                    self.db.create_account(
+                        name=row['name'], account_type=row['account_type'], bank_name=row.get('bank_name'),
+                        account_number_last4=row.get('account_number_last4'), file_fingerprint=row.get('file_fingerprint'),
+                        session=session
+                    )
+            return True
+        except Exception as e:
+            print(f"ERROR: Failed to save accounts: {e}")
+            return False
+
+    def update_account(self, account_id: int, new_data: Dict) -> bool:
+        try:
+            with self.db.transaction_scope() as session:
+                self.db.update_account(account_id, new_data, session=session)
+            return True
+        except Exception as e:
+            print(f"ERROR: Failed to update account {account_id}: {e}")
+            return False
+
+    # --- Credit Mapping ---
+    def save_card_statements_table(self, df: pd.DataFrame) -> bool:
+        try:
+            with self.db.transaction_scope() as session:
+                for _, row in df.iterrows():
+                    self.db.create_card_statement(
+                        account_id=row['account_id'], statement_date=row['statement_date'], 
+                        total_due=row.get('total_due'), session=session
+                    )
+            return True
+        except Exception as e:
+            print(f"ERROR: Failed to save card statements: {e}")
+            return False
+
+    def link_transfer(self, payment_transaction_id: int, statement_id: int) -> bool:
+        try:
+            with self.db.transaction_scope() as session:
+                transfer = self.db.create_transfer(payment_transaction_id, statement_id, session=session)
+                self.db.update_transaction(payment_transaction_id, {'is_transfer': True, 'transfer_id': transfer.id}, session=session)
+            return True
+        except Exception as e:
+            print(f"ERROR: Failed to link transfer: {e}")
+            return False
+
+    def update_statement_status(self, statement_id: int, new_status: str) -> bool:
+        try:
+            with self.db.transaction_scope() as session:
+                self.db.update_card_statement(statement_id, {'status': new_status}, session=session)
+            return True
+        except Exception as e:
+            print(f"ERROR: Failed to update statement {statement_id}: {e}")
+            return False
+
+    # --- Existing Methods ---
     def get_transactions_count(self) -> int:
         """
         Gets the total number of transactions in the database.
@@ -118,7 +150,7 @@ class DatabaseInterface:
         
         if not transactions:
             return pd.DataFrame(columns=[
-                'description', 'amount', 'transaction_date', 'category', 'sub_category'
+                'description', 'amount', 'transaction_date', 'category', 'sub_category', 'account_name'
             ])
         
         data = []
@@ -143,7 +175,8 @@ class DatabaseInterface:
                 'amount': float(transaction.amount),
                 'transaction_date': transaction.transaction_date,
                 'category': category,
-                'sub_category': sub_category
+                'sub_category': sub_category,
+                'account_name': transaction.account.name if transaction.account else None
             }
             data.append(row)
         
@@ -175,7 +208,7 @@ class DatabaseInterface:
         print(f"DEBUG: Starting atomic save of {len(df)} transactions")
         
         # Validate required columns
-        required_cols = ['amount', 'transaction_date']
+        required_cols = ['amount', 'transaction_date', 'account_id']
         missing_cols = [col for col in required_cols if col not in df.columns]
         if missing_cols:
             print(f"ERROR: Missing required columns: {missing_cols}")
@@ -234,7 +267,8 @@ class DatabaseInterface:
                             'amount': float(row['amount']),
                             'transaction_date': transaction_date,
                             'description': row.get('description') or None,
-                            'category_id': category_id
+                            'category_id': category_id,
+                            'account_id': row['account_id']
                         }
                         transactions_data.append(transaction_data)
                         
