@@ -47,12 +47,8 @@ class DatabaseInterface:
     def save_accounts_table(self, df: pd.DataFrame) -> bool:
         try:
             with self.db.transaction_scope() as session:
-                for _, row in df.iterrows():
-                    self.db.create_account(
-                        name=row['name'], account_type=row['account_type'], bank_name=row.get('bank_name'),
-                        account_number_last4=row.get('account_number_last4'), file_fingerprint=row.get('file_fingerprint'),
-                        session=session
-                    )
+                accounts_data = [{str(k): v for k, v in record.items()} for record in df.to_dict(orient='records')]
+                self.db.create_accounts_batch(accounts_data, session=session)
             return True
         except Exception as e:
             print(f"ERROR: Failed to save accounts: {e}")
@@ -71,11 +67,8 @@ class DatabaseInterface:
     def save_card_statements_table(self, df: pd.DataFrame) -> bool:
         try:
             with self.db.transaction_scope() as session:
-                for _, row in df.iterrows():
-                    self.db.create_card_statement(
-                        account_id=row['account_id'], statement_date=row['statement_date'], 
-                        total_due=row.get('total_due'), session=session
-                    )
+                statements_data = [{str(k): v for k, v in record.items()} for record in df.to_dict(orient='records')]
+                self.db.create_card_statements_batch(statements_data, session=session)
             return True
         except Exception as e:
             print(f"ERROR: Failed to save card statements: {e}")

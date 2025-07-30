@@ -411,12 +411,13 @@ class Database:
 
     def _is_descendant(self, category_id: int, potential_parent_id: int, session: Session) -> bool:
         """Checks if a category is a descendant of another using a recursive CTE."""
+        from sqlalchemy import select
         if not potential_parent_id:
             return False
 
-        descendants_cte = session.query(model.Category.id).filter(model.Category.id == category_id).cte(name="descendants_cte", recursive=True)
+        descendants_cte = select(model.Category.id).where(model.Category.id == category_id).cte(name="descendants_cte", recursive=True)
         descendants_cte = descendants_cte.union_all(
-            session.query(model.Category.id).filter(model.Category.parent_id == descendants_cte.c.id)
+            select(model.Category.id).where(model.Category.parent_id == descendants_cte.c.id)
         )
 
         return session.query(descendants_cte).filter(descendants_cte.c.id == potential_parent_id).first() is not None
