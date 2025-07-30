@@ -159,20 +159,20 @@ class DatabaseInterface:
     def get_card_statements_table(self) -> pd.DataFrame:
         """Get card statements with account names."""
         
-    # Batch Save Operations
+    # Batch Save Operations (BatchOperationResult)
     def save_transactions_table(self, df: pd.DataFrame) -> BatchOperationResult:
         """Atomic transaction save with auto-category creation."""
         
-    def save_accounts_table(self, df: pd.DataFrame) -> OperationResult:
+    def save_accounts_table(self, df: pd.DataFrame) -> BatchOperationResult:
         """Atomic account batch creation."""
         
-    def save_card_statements_table(self, df: pd.DataFrame) -> OperationResult:
+    def save_card_statements_table(self, df: pd.DataFrame) -> BatchOperationResult:
         """Atomic statement batch creation."""
         
-    def save_categories_table(self, df: pd.DataFrame) -> OperationResult:
+    def save_categories_table(self, df: pd.DataFrame) -> BatchOperationResult:
         """Atomic category creation with hierarchy support."""
         
-    # Individual Operations
+    # Individual Operations (OperationResult)
     def update_account(self, account_id: int, new_data: Dict) -> OperationResult:
         """Update single account with structured result."""
         
@@ -182,30 +182,30 @@ class DatabaseInterface:
     def flag_transaction_as_transfer(self, transaction_id: int) -> OperationResult:
         """Mark transaction as transfer."""
         
-    # Bulk Operations
-    def bulk_categorize_transactions(self, categorization_rules: List[Dict]) -> BatchOperationResult:
-        """Apply categorization rules to multiple transactions."""
+    # Category Management (OperationResult)
+    def create_category_hierarchy(self, category_name: str, sub_category_name: str = "") -> OperationResult:
+        """Create category hierarchy. Returns success/failure with structured result."""
         
-    # Category Management
-    def create_category_hierarchy(self, category_name: str, sub_category_name: str = "") -> bool:
-        """Create category hierarchy if it doesn't exist."""
+    # Statistics & Metadata (OperationResult)
+    def get_transactions_count(self) -> OperationResult:
+        """Get total transaction count. Returns count in .data field."""
         
-    # Statistics & Metadata
-    def get_transactions_count(self) -> int:
-        """Get total number of transactions for dashboard statistics."""
+    def get_latest_transaction_timestamp(self) -> OperationResult:
+        """Get most recent transaction timestamp. Returns timestamp in .data field."""
         
-    def get_latest_transaction_timestamp(self) -> Optional[datetime.datetime]:
-        """Get timestamp of most recent transaction for data freshness checks."""
-        
-    # Transaction Management (Context-based)
-    def begin_transaction(self) -> str:
-        """Begin new transaction context (returns transaction ID)."""
+    # Transaction Management (OperationResult)
+    def begin_transaction(self) -> OperationResult:
+        """Begin new transaction context. Returns transaction_id in .data field."""
         
     def commit_transaction(self, transaction_id: str) -> OperationResult:
-        """Commit transaction by ID (handled by transaction_scope)."""
+        """Commit transaction by ID."""
         
     def rollback_transaction(self, transaction_id: str) -> OperationResult:
-        """Rollback transaction by ID (handled by transaction_scope)."""
+        """Rollback transaction by ID."""
+        
+    # Bulk Operations (BatchOperationResult)
+    def bulk_categorize_transactions(self, categorization_rules: List[Dict]) -> BatchOperationResult:
+        """Apply categorization rules to multiple transactions."""
         
     # Internal Methods (Critical for Performance)
     def _resolve_category_id(self, category_name: str, sub_category_name: str, session: Optional[Session] = None) -> Optional[int]:
@@ -214,6 +214,78 @@ class DatabaseInterface:
     def _create_category_hierarchy_in_session(self, category_name: str, sub_category_name: str, session: Session) -> bool:
         """INTERNAL: Create category hierarchy within existing session for atomic operations."""
 ```
+
+---
+
+## **Return Type Standards (ADR-002 Compliance)**
+
+### **Decision Matrix for Return Types:**
+
+| Operation Type | Return Type | Rationale | Examples |
+|----------------|-------------|-----------|----------|
+| **Single Entity Operations** | `OperationResult` | One record, simple success/failure | `update_account()`, `link_transfer()` |
+| **DataFrame Operations** | `BatchOperationResult` | Multiple records, partial success possible | `save_transactions_table()`, `save_accounts_table()` |
+| **Metadata/Utility Operations** | `OperationResult` | Single value result | `get_transactions_count()`, `create_category_hierarchy()` |
+| **Bulk Processing** | `BatchOperationResult` | Multiple operations, need success counts | `bulk_categorize_transactions()` |
+| **Data Retrieval** | `pd.DataFrame` | Direct data access, no error wrapping needed | `get_transactions_table()`, `get_categories_table()` |
+
+### **Result Structure Definitions:**
+
+#### **OperationResult (Single Operations)**
+```python
+@dataclass
+class OperationResult:
+    success: bool                        # Operation succeeded
+    data: Optional[Any] = None           # Single value (count, ID, timestamp, object)
+    error_message: Optional[str] = None  # Human-readable error description
+    error_type: Optional[str] = None     # Error category for handling
+    is_retryable: bool = False          # Whether operation can be retried
+    affected_rows: int = 0              # Number of database rows affected (0 or 1)
+
+# Usage Examples:
+# result.data = 150                    # For get_transactions_count()
+# result.data = datetime(...)          # For get_latest_transaction_timestamp()
+# result.data = "txn_12345"           # For begin_transaction()
+```
+
+#### **BatchOperationResult (Multiple Operations)**
+```python
+@dataclass
+class BatchOperationResult:
+    success: bool                        # All operations succeeded
+    data: Optional[List[Any]] = None     # List of created/updated objects
+    error_message: Optional[str] = None  # Human-readable error description
+    error_type: Optional[str] = None     # Error category for handling
+    is_retryable: bool = False          # Whether batch can be retried
+    successful_count: int = 0           # Number of successful operations
+    failed_count: int = 0               # Number of failed operations
+    total_count: int = 0                # Total operations attempted
+
+# Usage Examples:
+# result.successful_count = 95         # 95 transactions saved successfully
+# result.failed_count = 5              # 5 transactions failed validation
+# result.data = [transaction_objects]  # List of created Transaction objects
+```
+
+### **Comprehensive Exception Handling (ADR-002 Compliant):**
+- **Universal catch-all pattern**: All methods use `except Exception as e:` to prevent any exception leakage
+- **Sophisticated error classification**: `handle_constraint_error()` processes ALL exception types (SQLAlchemy, Python, unexpected)
+- **Structured translation**: Every exception becomes a structured OperationResult/BatchOperationResult
+- **Consistent error information**: All errors include error_message, error_type, and retry guidance
+- **No exceptions leak**: Guaranteed by comprehensive Exception catch blocks in every operation
+- **Partial failure handling**: Batch operations capture detailed success/failure counts
+
+### **Known Limitations & Testing Requirements:**
+
+#### **Scalability Limitation:**
+- **DataFrame operations** load full datasets into memory
+- **No pagination** in current API design (acceptable for small-medium datasets)
+- **Future enhancement:** Add `limit`/`offset` parameters when needed
+
+#### **Session Management Risk:**
+- **Forgotten session parameter** causes auto-commit instead of transaction participation
+- **Testing requirement:** Stringent tests needed to detect partial commit scenarios
+- **Mitigation:** Comprehensive test coverage for multi-step operations
 
 ---
 
