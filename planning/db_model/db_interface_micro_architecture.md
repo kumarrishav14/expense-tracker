@@ -1,510 +1,406 @@
 # Database Interface Micro-Architecture
 
-**Author:** AI Architect
-**Date:** July 24, 2025
-**Version:** 2.0
+**Component:** `core.database.db_interface.DatabaseInterface`  
+**Last Updated:** 2025-01-15  
+**Status:** IMPLEMENTED
 
-## **Component Overview**
+---
 
-The `db_interface` component serves as the **Simple Data Access Layer** in the personal expense tracking system. It provides clean, filtered access to raw data and handles data persistence, while leaving all business logic and data processing to individual components.
+## 1. **What & Why** *(2 minutes)*
+**Purpose:** Public API layer that provides DataFrame-centric database operations while hiding SQLAlchemy complexity from application components.
 
-**Version 2.0 Update:** This version incorporates the new `Account`, `CardStatement`, and `Transfer` entities required for the transfer-matching feature. The interface is expanded to manage these new data models while maintaining its core responsibility of being a simple data access layer.
+**Key Decisions:**
+- **DataFrame-Centric API**: All operations use pandas DataFrames for seamless AI/ML integration *(See [ADR-003-DataFrame-Centric-API](../db_model/ADR-003-DataFrame-Centric-API.md))*
+- **Structured Error Results**: Returns `OperationResult`/`BatchOperationResult` instead of exceptions *(See [ADR-002-API-Error-Handling](../db_model/ADR-002-API-Error-Handling.md))*
+- **Automatic Category Resolution**: Handles category hierarchy creation and resolution transparently
+- **Denormalized Data Model**: Exposes simple category/sub_category columns instead of foreign keys
 
-## **Position in System Architecture**
+---
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    STREAMLIT FRONTEND                           │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐               │
-│  │  Dashboard  │ │  Analysis   │ │ AI Chatbot  │               │
-│  │     Tab     │ │     Tab     │ │     Tab     │               │
-│  │ ┌─────────┐ │ │ ┌─────────┐ │ │ ┌─────────┐ │               │
-│  │ │Dashboard│ │ │ │Analysis │ │ │ │Chatbot  │ │               │
-│  │ │Processor│ │ │ │Processor│ │ │ │Processor│ │               │
-│  │ └─────────┘ │ │ └─────────┘ │ │ └─────────┘ │               │
-│  └─────────────┘ └─────────────┘ └─────────────┘               │
-└─────────────┬───────────────┬───────────────┬─────────────────┘
-              │               │               │
-              └───────────────▼───────────────┘
-┌─────────────────────────────────────────────────────────────────┐
-│              DB_INTERFACE COMPONENT                             │
-│              (Simple Data Access Layer)                        │
-│  • Raw data access with basic filtering                        │
-│  • Data persistence operations                                 │
-│  • DataFrame ↔ Database translation                            │
-└─────────────┬───────────────────────────────────────────────────┘
-              │
-┌─────────────▼───────────────────────────────────────────────────┐
-│              DATABASE LAYER (SQLAlchemy + SQLite)               │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-## **Core Responsibilities Matrix**
-
-| Responsibility Category | Specific Functions | Components Served |
-|------------------------|-------------------|-------------------|
-| **Raw Data Access** | Get transactions/categories with basic filters | All UI Components |
-| **Data Persistence** | Save operations with transaction management | Data Pipeline, UI |
-| **Data Translation** | DataFrame ↔ ORM conversion | All UI Components |
-| **Basic Filtering** | Date range, category, amount filters | All UI Components |
-| **Database Error Handling** | Database constraint and connection errors | All Components |
-| **Category Management** | Hierarchy auto-creation | Statement Input, Settings |
-
-## **What db_interface Does NOT Handle**
-
-| Responsibility | Owner Component | Rationale |
-|----------------|-----------------|-----------|
-| **Business Logic Validation** | Data Processor | Domain-specific rules |
-| **Data Quality Validation** | Data Processor | Completeness, accuracy checks |
-| **Format Validation** | Data Processor | Date formats, number formats |
-| **Duplicate Detection** | Data Processor | Business logic responsibility |
-| **Data Analysis** | Dashboard/Analysis Processors | Component-specific calculations |
-| **AI Insights** | AI Chatbot Component | Domain-specific processing |
-| **Complex Aggregations** | UI Component Processors | Better performance and modularity |
-| **Visualization Logic** | UI Components | Presentation layer responsibility |
-
-## **DataFrame Contracts (Data API)**
-
-### **Raw DataFrames Provided**
-
-#### **1. Transactions DataFrame**
-```python
-transactions_df: pd.DataFrame
-Columns:
-├─ id: int (PK)
-├─ description: str (optional)
-├─ amount: float (required)
-├─ transaction_date: datetime (required)
-├─ category: str (optional)
-├─ sub_category: str (optional)
-├─ account_id: int (FK)
-├─ statement_id: int (optional, FK)
-├─ is_transfer: bool
-└─ transfer_id: int (optional, FK)
-
-Usage: Raw data for all UI components to process as needed
-```
-
-#### **2. Categories DataFrame**
-```python
-categories_df: pd.DataFrame
-Columns:
-├─ id: int (PK)
-├─ name: str
-└─ parent_category: str (optional)
-
-Usage: Raw category hierarchy for components to analyze and display
-```
-
-#### **3. Accounts DataFrame**
-```python
-accounts_df: pd.DataFrame
-Columns:
-├─ id: int (PK)
-├─ name: str
-├─ account_type: str
-├─ bank_name: str (optional)
-└─ account_number_last4: str (optional)
-
-Usage: Provides a list of all user-defined accounts.
-```
-
-#### **4. Card Statements DataFrame**
-```python
-card_statements_df: pd.DataFrame
-Columns:
-├─ id: int (PK)
-├─ account_id: int (FK)
-├─ statement_date: date
-├─ total_due: float (optional)
-└─ status: str (e.g., 'UNPAID', 'PARTIALLY_PAID', 'PAID')
-
-Usage: Provides metadata for each credit card statement.
-```
-
-**Note**: All analysis, aggregations, insights, and complex processing are handled by individual UI components, not by db_interface.
-
-## **Component Internal Architecture**
-
-### **Class Structure**
-
-```python
-class DatabaseInterface:
-    """Simple data access layer providing raw data with basic filtering"""
+## 2. **Where It Fits** *(3 minutes)*
+```mermaid
+graph TD
+    A[Streamlit Frontend] --> B[db_interface<br/>Public API]
+    C[Data Processors] --> B
+    D[AI Components] --> B
     
-    # Core Data Management
-    def __init__(self, db_url: str):
-        """Initializes the interface with the database URL."""
-
-    def get_session(self) -> Session:
-        """Provides a database session for operations."""
+    B --> E[db_manager<br/>Internal Engine]
+    B --> F[pandas DataFrame<br/>Operations]
     
-    # --- Raw Data Access Methods (Database → DataFrames) ---
-    def get_transactions_table(self, ...) -> pd.DataFrame:
-        """Returns a DataFrame of transactions with optional filters."""
-
-    def get_categories_table(self) -> pd.DataFrame:
-        """Returns a DataFrame of all expense categories."""
-
-    def get_accounts_table(self, only_active: bool = False) -> pd.DataFrame:
-        """Returns a DataFrame of all user-defined accounts, with an option to filter for only active ones."""
-
-    def get_card_statements_table(self) -> pd.DataFrame:
-        """Returns a DataFrame of all credit card statement metadata."""
+    E --> G[SQLAlchemy<br/>Database]
     
-    # --- Data Persistence Methods (DataFrames → Database) ---
-    def save_transactions_table(self, df: pd.DataFrame) -> OperationResult:
-        """Saves a DataFrame of transactions to the database."""
-
-    def save_categories_table(self, df: pd.DataFrame) -> OperationResult:
-        """Saves a DataFrame of categories to the database."""
-
-    def save_accounts_table(self, df: pd.DataFrame) -> OperationResult:
-        """Saves a DataFrame of new accounts to the database."""
-
-    def update_account(self, account_id: int, new_data: dict) -> OperationResult:
-        """Updates an existing account (e.g., to change its name or set is_active=False)."""
-
-    def save_card_statements_table(self, df: pd.DataFrame) -> OperationResult:
-        """Saves a DataFrame of new card statements to the database."""
-
-    # --- Transfer Matching Specific Methods ---
-    def link_transfer(self, payment_transaction_id: int, statement_id: int) -> OperationResult:
-        """Creates an auditable record in the 'transfers' table to link a bank payment to a card statement."""
-
-    def flag_transaction_as_transfer(self, transaction_id: int, transfer_id: int) -> OperationResult:
-        """Updates a single transaction to mark it as a transfer by setting the 'is_transfer' flag and linking it to the 'transfers' table."""
-
-    def update_statement_status(self, statement_id: int, new_status: str) -> OperationResult:
-        """Updates the status of a card statement (e.g., to 'PAID' or 'PARTIALLY_PAID')."""
-
-    # Batch operations with detailed error reporting
-    def save_transactions_batch(self, df: pd.DataFrame) -> BatchOperationResult:
-        """Saves a batch of transactions with detailed error reporting."""
+    subgraph "Application Layer"
+        A
+        C
+        D
+    end
     
-    # Category Management
-    def create_category_hierarchy(self, category: str, sub_category: str) -> bool:
-        """Creates a category and sub-category hierarchy if it doesn't exist."""
+    subgraph "Database Layer"
+        B
+        E
+        G
+    end
+```
 
-    def bulk_categorize_transactions(self, predictions_df: pd.DataFrame) -> OperationResult:
-        """Updates the category for a batch of transactions based on AI predictions."""
+**Depends On:** db_manager, pandas, SQLAlchemy Session  
+**Used By:** All application components (frontend, processors, AI components)
+
+---
+
+## 5. **Internal Structure**
+```mermaid
+graph TB
+    subgraph "DatabaseInterface"
+        subgraph "Public DataFrame API Layer"
+            A1[get_*_table methods]
+            A2[save_*_table methods]
+        end
+        
+        subgraph "Business Logic Layer"
+            B1[Category Resolution]
+            B2[Data Validation]
+            B3[Contract Enforcement]
+        end
+        
+        subgraph "Error Handling Layer"
+            C1[Exception Translation]
+            C2[Structured Results]
+            C3[Retry Logic]
+        end
+        
+        subgraph "Session Management Layer"
+            D1[Transaction Scope]
+            D2[db_manager Delegation]
+            D3[Atomic Operations]
+        end
+    end
     
-    # Transaction Management
-    def begin_transaction(self) -> TransactionContext:
-        """Begins a new transaction context for atomic operations."""
-
-    def rollback_transaction(self, context: TransactionContext):
-        """Rolls back the operations within the given transaction context."""
-
-    def commit_transaction(self, context: TransactionContext):
-        """Commits the operations within the given transaction context."""
-```
-
-### **Internal Data Flow**
-
-```
-Component Request → Apply Basic Filters → Database Query → ORM Objects → DataFrame Conversion → Return Raw DataFrame
-                                                                                                    ↓
-                                                                                        Component Processes Data
-```
-
-## **Caching Strategy**
-
-### **Simplified Caching Architecture**
-
-```python
-Cache Strategy:
-├─ Streamlit Session State:
-│   ├─ Raw transactions DataFrame
-│   └─ Categories DataFrame
-├─ Database Connection Pooling:
-│   └─ SQLAlchemy connection cache
-└─ Component-Level Caching:
-    └─ Each UI component caches its own processed data
-```
-
-### **Cache Invalidation Strategy**
-
-```python
-Cache Invalidation Rules:
-├─ Data Modification Events:
-│   ├─ Transaction save → Invalidate raw transactions cache
-│   └─ Category changes → Invalidate categories cache
-└─ Manual Invalidation:
-    ├─ User refresh action
-    └─ Component-specific cache clearing
-```
-
-## **Error Handling Architecture**
-
-### **Error Classification & Response**
-
-```python
-Error Handling Matrix:
-├─ DatabaseConnectionError:
-│   ├─ Response: Retry with exponential backoff
-│   ├─ Fallback: Use cached DataFrames
-│   └─ User Message: "Connection issue, showing cached data"
-├─ DatabaseConstraintError:
-│   ├─ Foreign Key Violations: Category ID doesn't exist
-│   ├─ Unique Constraint Violations: Duplicate primary keys
-│   ├─ Check Constraint Violations: Invalid data ranges
-│   ├─ Not Null Violations: Required database fields missing
-│   ├─ Response: Return detailed constraint error (no retry)
-│   ├─ Fallback: None (data must be fixed by Data Processor)
-│   └─ User Message: Specific constraint violation details
-├─ TransactionError:
-│   ├─ Response: Full rollback, preserve original state
-│   ├─ Fallback: Restore from cache
-│   └─ User Message: "Operation failed, no changes made"
-└─ CacheError:
-    ├─ Response: Invalidate cache, reload from database
-    ├─ Fallback: Direct database access
-    └─ User Message: "Refreshing data..."
-```
-
-### **Simplified Operation Result Structure**
-
-```python
-@dataclass
-class OperationResult:
-    success: bool
-    operation: str  # "save_transactions", "save_categories"
-    affected_rows: int = 0
-    error_message: Optional[str] = None
-    error_type: Optional[str] = None  # "connection", "constraint", "transaction"
+    A1 --> B1
+    A2 --> B2
+    B1 --> C1
+    B2 --> C2
+    C1 --> D1
+    C2 --> D2
+    D1 --> E[db_manager]
+    D2 --> E
     
-# For batch operations with detailed errors
-@dataclass
-class BatchOperationResult(OperationResult):
-    failed_rows: List[int] = None  # Row indices that failed
-    constraint_violations: List[str] = None  # Specific constraint details
+    E --> F[SQLAlchemy Database]
 ```
 
-### **Retry Strategy by Error Type**
+**Critical Path:** DataFrame input → Data validation → Category resolution → db_manager operation → Error handling → Structured result  
+**Performance Notes:** O(1) category resolution using optimized database queries, atomic batch operations
 
+---
+
+## 6. **Performance & Scalability**
+
+| Operation | Complexity | Notes |
+|-----------|------------|-------|
+| `get_transactions_table()` | O(n) | Denormalizes all transactions with category names |
+| `save_transactions_table()` | O(n) | Atomic batch operation with category auto-creation |
+| `save_accounts_table()` | O(n) | Atomic batch account creation |
+| `save_card_statements_table()` | O(n) | Atomic batch statement creation |
+| `_resolve_category_id()` | O(1) | Optimized database query using indexes |
+| `bulk_categorize_transactions()` | O(n*m) | n=transactions, m=rules, but uses optimized queries |
+
+**Limits:**
+- **Memory:** DataFrame operations load full result sets into memory
+- **CPU:** Category resolution becomes bottleneck with complex hierarchies
+
+**Performance Requirements:**
+- Category resolution must use targeted database queries, not full table scans
+- Batch operations must be atomic and use SQL bulk operations
+- All save operations must return structured results with detailed error information
+
+---
+
+## 7. **Internal Testing**
 ```python
-Retry Decision Matrix:
-├─ Retryable Errors (Auto-retry with backoff):
-│   ├─ DatabaseConnectionError: Connection timeout, database unavailable
-│   ├─ TransactionError: Deadlock, temporary lock conflicts
-│   └─ SessionError: Session management issues
-├─ Non-Retryable Errors (Return immediately):
-│   ├─ DatabaseConstraintError: Foreign key, unique, check constraints
-│   ├─ DataStructureError: Missing columns, invalid DataFrame
-│   └─ PermissionError: Database access denied
-```
+def test_dataframe_api_consistency():
+    """Test that all get_*_table methods return consistent DataFrame structure."""
+    # Test DataFrame column consistency
+    pass
 
-## **Transaction Management**
+def test_atomic_batch_operations():
+    """Test that batch operations are truly atomic."""
+    # Test rollback behavior on partial failures
+    pass
 
-### **Atomic Operation Pattern**
+def test_category_resolution_performance():
+    """Test O(1) category resolution performance."""
+    # Verify no O(n) category fetching
+    pass
 
-```python
-Transaction Scope Implementation:
-├─ Begin Transaction Context
-├─ Check Basic DataFrame Structure (columns present)
-├─ Execute All Database Operations
-├─ Handle Database Constraint Violations
-├─ Commit Transaction
-└─ Notify Dependent Components
-
-Rollback Scenarios:
-├─ Database constraint violation → Full rollback
-├─ Connection failure → Full rollback
-├─ Transaction conflict → Full rollback
-└─ Component notification failure → Log warning, continue
-
-Note: Data validation is handled by Data Processor before reaching db_interface
-```
-
-### **Batch Processing Strategy**
-
-```python
-Batch Operation Handling:
-├─ Small Batches (< 100 rows):
-│   ├─ Single transaction, all-or-nothing
-│   ├─ Return simple OperationResult
-│   └─ On constraint error: rollback, return detailed error
-├─ Medium Batches (100-1000 rows):
-│   ├─ Single transaction with detailed error tracking
-│   ├─ Return BatchOperationResult with failed row indices
-│   └─ On constraint error: rollback, return specific violations
-└─ Large Batches (> 1000 rows):
-    ├─ Chunked transactions (500 rows each)
-    ├─ Continue processing remaining chunks on partial failure
-    └─ Return BatchOperationResult with comprehensive error details
-
-Constraint Error Handling:
-├─ No Retry: Constraint violations require data fixes
-├─ Detailed Reporting: Specific constraint and row information
-├─ Rollback Strategy: Full rollback for single transaction
-└─ User Action Required: Fix data in Data Processor and retry
-```
-
-## **Component Integration Patterns**
-
-### **UI Component Integration**
-
-```python
-# Dashboard Tab Integration
-raw_transactions = db_interface.get_transactions_table(
-    date_range=(start_date, end_date)
-)
-# Dashboard processes its own data
-monthly_summary = dashboard_processor.calculate_monthly_summary(raw_transactions)
-spending_by_category = dashboard_processor.group_by_category(raw_transactions)
-
-# Statement Input Integration (via Data Pipeline)
-result = db_interface.save_transactions_table(processed_df)
-if result.success:
-    # Trigger UI refresh across all tabs
-    st.rerun()
-
-# Settings Tab Integration
-categories_df = db_interface.get_categories_table()
-# User modifies categories
-result = db_interface.save_categories_table(modified_df)
-
-# Analysis Tab Integration
-raw_transactions = db_interface.get_transactions_table()
-# Analysis Tab does its own complex processing
-trend_analysis = analysis_processor.calculate_trends(raw_transactions)
-custom_filters = analysis_processor.apply_user_filters(raw_transactions, filters)
-```
-
-### **AI Backend Integration**
-
-```python
-# AI Category Prediction
-uncategorized_transactions = db_interface.get_transactions_table(
-    categories=[]  # Filter for uncategorized transactions
-)
-# AI processes and returns predictions
-predictions_df = ai_backend.predict_categories(uncategorized_transactions)
-result = db_interface.bulk_categorize_transactions(predictions_df)
-
-# AI Chatbot Integration
-all_transactions = db_interface.get_transactions_table()
-# AI Chatbot processes data and generates insights internally
-chatbot_response = ai_chatbot.process_query(user_query, all_transactions)
-```
-
-### **Data Pipeline Integration**
-
-```python
-# File Processing Pipeline
-parsed_data = file_parser.parse(uploaded_file)
-validated_data = data_processor.validate_and_clean(parsed_data)
-result = db_interface.save_transactions_table(validated_data)
-
-# Error handling with detailed feedback
-if not result.success:
-    for error in result.error_details:
-        st.error(f"Row {error.row_index}: {error.message}")
-```
-
-## **Performance Considerations (Personal Use)**
-
-### **Simple Performance Guidelines**
-
-```python
-Basic Performance Approach:
-├─ Load all data by default (personal datasets are small)
-├─ Simple caching in Streamlit session state
-├─ Basic database indexes on primary keys
-└─ No complex optimization needed for personal use
-
-Note: Advanced performance optimization moved to future phases
-```
-
-## **Simple Logging (Personal Use)**
-
-### **Basic Logging Strategy**
-
-```python
-Essential Logging Only:
-├─ ERROR: Failed operations, database errors
-├─ WARNING: Retry attempts, constraint violations
-└─ INFO: Successful batch operations
-
-Note: Detailed monitoring and metrics moved to future phases
-```
-
-## **Testing Strategy**
-
-### **Unit Testing**
-
-```python
-Test Categories:
-├─ DataFrame Conversion Tests:
-│   ├─ ORM → DataFrame transformation
-│   ├─ DataFrame → ORM transformation
-│   └─ Data type preservation
-├─ Cache Management Tests:
-│   ├─ Cache invalidation logic
-│   ├─ Cache hit/miss scenarios
-│   └─ Memory usage limits
-├─ Error Handling Tests:
-│   ├─ Database connection failures
-│   ├─ Database constraint errors
-│   └─ Transaction rollback scenarios
-└─ Performance Tests:
-    ├─ Large dataset handling
-    ├─ Concurrent access patterns
-    └─ Memory usage under load
-```
-
-### **Integration Testing**
-
-```python
-Integration Scenarios:
-├─ UI Component Integration:
-│   ├─ Multi-tab data consistency
-│   ├─ Real-time data updates
-│   └─ Error propagation to UI
-├─ AI Backend Integration:
-│   ├─ Prediction data flow
-│   ├─ Insight generation pipeline
-│   └─ Model failure handling
-└─ Data Pipeline Integration:
-    ├─ End-to-end file processing
-    ├─ Batch operation handling
-    └─ Error recovery scenarios
-```
-
-## **Future Enhancements (Personal Project)**
-
-### **Phase 2 - Performance & Reliability**
-
-```python
-When Dataset Grows Large:
-├─ Query optimization for large datasets
-├─ DataFrame chunking for memory efficiency
-├─ Advanced caching strategies
-└─ Performance monitoring
-
-When Features Expand:
-├─ Additional file format support
-├─ Data backup and restore
-├─ Advanced error recovery
-└─ Audit trail for modifications
-```
-
-### **Phase 3 - Advanced Features (Optional)**
-
-```python
-If Needed Later:
-├─ Bank API integrations
-├─ Cloud storage backup
-├─ Data export/import improvements
-└─ Advanced analytics features
-
-Note: Multi-user support removed - this is a personal app
+def test_structured_error_handling():
+    """Test that all operations return structured results."""
+    # Test OperationResult/BatchOperationResult consistency
+    pass
 ```
 
 ---
 
-**Document Version**: 2.0  
-**Last Updated**: 2025-07-24  
-**Component Phase**: Draft  
-**Dependencies**: system_architecture.md, schema_architecture.md
+## 6. **Quick Reference**
+```python
+# Internal structure overview
+class DatabaseInterface:
+    def __init__(self, db_url: str = "sqlite:///expenses.db"):
+        """Initialize with db_manager instance."""
+        
+    # DataFrame API Methods
+    def get_transactions_table(self) -> pd.DataFrame:
+        """Get denormalized transactions with category/sub_category columns."""
+        
+    def get_categories_table(self) -> pd.DataFrame:
+        """Get categories with parent_category names (not IDs)."""
+        
+    def get_accounts_table(self, only_active: bool = False) -> pd.DataFrame:
+        """Get accounts with all relevant fields."""
+        
+    def get_card_statements_table(self) -> pd.DataFrame:
+        """Get card statements with account names."""
+        
+    # Batch Save Operations
+    def save_transactions_table(self, df: pd.DataFrame) -> BatchOperationResult:
+        """Atomic transaction save with auto-category creation."""
+        
+    def save_accounts_table(self, df: pd.DataFrame) -> OperationResult:
+        """Atomic account batch creation."""
+        
+    def save_card_statements_table(self, df: pd.DataFrame) -> OperationResult:
+        """Atomic statement batch creation."""
+        
+    def save_categories_table(self, df: pd.DataFrame) -> OperationResult:
+        """Atomic category creation with hierarchy support."""
+        
+    # Individual Operations
+    def update_account(self, account_id: int, new_data: Dict) -> OperationResult:
+        """Update single account with structured result."""
+        
+    def link_transfer(self, payment_transaction_id: int, statement_id: int) -> OperationResult:
+        """Create transfer link between payment and statement."""
+        
+    def flag_transaction_as_transfer(self, transaction_id: int) -> OperationResult:
+        """Mark transaction as transfer."""
+        
+    # Bulk Operations
+    def bulk_categorize_transactions(self, categorization_rules: List[Dict]) -> BatchOperationResult:
+        """Apply categorization rules to multiple transactions."""
+        
+    # Category Management
+    def create_category_hierarchy(self, category_name: str, sub_category_name: str = "") -> bool:
+        """Create category hierarchy if it doesn't exist."""
+        
+    # Statistics & Metadata
+    def get_transactions_count(self) -> int:
+        """Get total number of transactions for dashboard statistics."""
+        
+    def get_latest_transaction_timestamp(self) -> Optional[datetime.datetime]:
+        """Get timestamp of most recent transaction for data freshness checks."""
+        
+    # Transaction Management (Context-based)
+    def begin_transaction(self) -> str:
+        """Begin new transaction context (returns transaction ID)."""
+        
+    def commit_transaction(self, transaction_id: str) -> OperationResult:
+        """Commit transaction by ID (handled by transaction_scope)."""
+        
+    def rollback_transaction(self, transaction_id: str) -> OperationResult:
+        """Rollback transaction by ID (handled by transaction_scope)."""
+        
+    # Internal Methods (Critical for Performance)
+    def _resolve_category_id(self, category_name: str, sub_category_name: str, session: Optional[Session] = None) -> Optional[int]:
+        """INTERNAL: O(1) category resolution using database indexes."""
+        
+    def _create_category_hierarchy_in_session(self, category_name: str, sub_category_name: str, session: Session) -> bool:
+        """INTERNAL: Create category hierarchy within existing session for atomic operations."""
+```
+
+---
+
+## **Configuration & Initialization**
+
+### **Timezone Handling**
+```python
+# All timestamps use Indian Standard Time
+indian_timezone = pytz.timezone("Asia/Kolkata")
+
+# Automatic timezone localization in save operations
+if transaction_date.tzinfo is None:
+    transaction_date = indian_timezone.localize(transaction_date)
+```
+
+### **Input Contract Validation**
+```python
+# DataFrame contract validation - ensures data processors send correct format
+required_cols = ['amount', 'transaction_date', 'account_id']
+missing_cols = [col for col in required_cols if col not in df.columns]
+if missing_cols:
+    return BatchOperationResult(
+        success=False,
+        error_message=f"Missing required columns: {missing_cols}"
+    )
+
+# Standardized data type conversion - processors can send various formats
+if isinstance(transaction_date, str):
+    transaction_date = pd.to_datetime(transaction_date).to_pydatetime()
+elif isinstance(transaction_date, pd.Timestamp):
+    transaction_date = transaction_date.to_pydatetime()
+
+# Contract: Data processors must transform raw DataFrames into this standardized format
+# - Raw files → Parser → Raw DataFrame → Data Processor → Standardized DataFrame → db_interface
+# - Bank statements → PDF Parser → Raw columns → AI Processor → Standardized DataFrame → db_interface
+# - CSV uploads → CSV Parser → Raw columns → Rule Processor → Standardized DataFrame → db_interface
+```
+
+### **Database Engine Setup**
+```python
+# Engine initialization with SQLite optimization
+def __init__(self, db_url: str = "sqlite:///expenses.db"):
+    self.db = Database(db_url)
+    # Database handles connect_args for SQLite thread safety
+```
+
+---
+
+## **Key Implementation Patterns**
+
+### **Pattern 1: DataFrame Denormalization**
+
+```
+DataFrame Denormalization Flow:
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   SQLAlchemy    │───▶│   Join &        │───▶│   DataFrame     │
+│   ORM Objects   │    │   Transform     │    │   with Names    │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+
+Key Transformations:
+├─ category_id → category + sub_category names
+├─ account_id → account_name  
+├─ Foreign keys → Human-readable names
+└─ Hierarchical data → Flat columns
+
+Benefits:
+- AI/ML components work with simple DataFrames
+- No foreign key complexity in application layer
+- Easy to export/import via CSV
+```
+
+### **Pattern 1.5: Critical Internal Methods**
+```
+Internal Category Resolution (_resolve_category_id):
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   category +    │───▶│   Targeted      │───▶│   category_id   │
+│   sub_category  │    │   SQL Query     │    │   or None       │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+
+Strategy:
+IF sub_category provided:
+  1. Query: SELECT id FROM categories WHERE name=sub_category AND parent_id=(
+       SELECT id FROM categories WHERE name=category AND parent_id IS NULL)
+ELSE:
+  1. Query: SELECT id FROM categories WHERE name=category AND parent_id IS NULL
+
+Performance: O(1) using database indexes vs O(n) Python iteration
+
+Internal Hierarchy Creation (_create_category_hierarchy_in_session):
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Category      │───▶│   Check/Create  │───▶│   Check/Create  │
+│   Names         │    │   Parent        │    │   Child         │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+
+Atomicity: All operations within provided session (caller manages transaction)
+Error Handling: Returns boolean success, lets exceptions propagate for rollback
+```
+
+### **Pattern 2: Optimized Category Resolution**
+```
+Category Resolution Strategy:
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   category +    │───▶│   Targeted      │───▶│   category_id   │
+│   sub_category  │    │   DB Query      │    │   or None       │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+
+Performance Optimization:
+OLD: get_all_categories() + Python iteration (O(n))
+NEW: db.get_category_by_name() with SQL WHERE clause (O(1))
+
+Auto-Creation Flow:
+IF category not found:
+  1. Create parent category (if needed)
+  2. Create child category (if needed)  
+  3. Re-resolve category_id
+  4. Continue with transaction
+```
+
+### **Pattern 3: Atomic Batch Operations**
+
+```
+Atomic Batch Operation Flow:
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   DataFrame     │───▶│   Validate &    │───▶│   Start         │
+│   Input         │    │   Transform     │    │   Transaction   │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+                                                       │
+┌─────────────────┐    ┌─────────────────┐    ┌───────▼─────────┐
+│   Structured    │◀───│   Commit or     │◀───│   Process All   │
+│   Result        │    │   Rollback      │    │   Records       │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+
+Key Principles:
+- Use transaction_scope() context manager
+- Process all records before committing
+- Auto-create categories within same transaction
+- Return detailed success/failure information
+```
+
+### **Pattern 4: Structured Error Translation**
+```
+Error Translation Flow:
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   SQLAlchemy    │───▶│   Classify &    │───▶│   Structured    │
+│   Exception     │    │   Translate     │    │   Result Object │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+
+Translation Strategy:
+try:
+    # db_manager operation
+    result = self.db.operation(data, session=session)
+    return OperationResult(success=True, ...)
+except Exception as e:
+    error_info = self.db.handle_constraint_error(e)
+    return OperationResult(
+        success=False,
+        error_message=error_info['error_message'],
+        error_type=error_info['error_type'],
+        is_retryable=self.db.is_retryable_error(e)
+    )
+
+Result Types:
+- OperationResult: Single operations
+- BatchOperationResult: Batch operations with counts
+```
+
+### **Pattern 5: Session Management Delegation**
+```
+Session Management Pattern:
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Public API    │───▶│   transaction_  │───▶│   db_manager    │
+│   Method        │    │   scope()       │    │   Operation     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+
+Pattern Usage:
+def save_operation(self, df: pd.DataFrame) -> OperationResult:
+    try:
+        with self.db.transaction_scope() as session:
+            # All operations within this block are atomic
+            result = self.db.batch_operation(data, session=session)
+        return OperationResult(success=True, ...)
+    except Exception as e:
+        # Handle and translate error
+        return OperationResult(success=False, ...)
+
+Benefits:
+- Automatic transaction management
+- Consistent error handling
+- No manual session cleanup required
+```
