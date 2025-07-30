@@ -225,6 +225,7 @@ class Database:
                 db_transaction = model.Transaction(
                     amount=data['amount'],
                     transaction_date=data['transaction_date'],
+                    account_id=data['account_id'],
                     description=data.get('description'),
                     category_id=data.get('category_id'),
                     created_at=datetime.datetime.now(indian_timezone),
@@ -375,36 +376,54 @@ class Database:
         db = session if session is not None else self.get_session()
         return db.query(model.Category).all()
 
-    def update_category(self, category_id: int, name: str, parent_id: Optional[int] = None, session: Optional[Session] = None) -> Optional[model.Category]:
+    def update_category(self, category_id: int, new_data: Dict[str, Any], session: Optional[Session] = None) -> Optional[model.Category]:
         """
-        Updates an existing category.
+        Updates an existing category from a dictionary of new data.
 
         Args:
             category_id (int): The ID of the category to update.
-            name (str): The new name for the category.
-            parent_id (Optional[int]): The new parent ID for the category.
+            new_data (Dict[str, Any]): A dictionary containing the new data.
             session (Optional[Session]): Database session to use. If None, uses get_session().
 
         Returns:
             Optional[model.Category]: The updated category object, or None if not found.
         """
         db = session if session is not None else self.get_session()
+
+        if 'parent_id' in new_data:
+            parent_id = new_data['parent_id']
+            if category_id == parent_id:
+                raise ValueError("Circular Dependency: A category cannot be its own parent.")
+            if self._is_descendant(category_id, parent_id, db):
+                raise ValueError("Circular Dependency: Cannot set a category's parent to one of its own descendants.")
+
         db_category = db.query(model.Category).filter(model.Category.id == category_id).first()
         if db_category:
-            db_category.name = name
-            db_category.parent_id = parent_id
+            for key, value in new_data.items():
+                setattr(db_category, key, value)
             db_category.updated_at = datetime.datetime.now(indian_timezone)
             
-            # Only commit if we're managing our own session
             if session is None:
                 db.commit()
                 db.refresh(db_category)
         
         return db_category
 
+    def _is_descendant(self, category_id: int, potential_parent_id: int, session: Session) -> bool:
+        """Checks if a category is a descendant of another using a recursive CTE."""
+        if not potential_parent_id:
+            return False
+
+        descendants_cte = session.query(model.Category.id).filter(model.Category.id == category_id).cte(name="descendants_cte", recursive=True)
+        descendants_cte = descendants_cte.union_all(
+            session.query(model.Category.id).filter(model.Category.parent_id == descendants_cte.c.id)
+        )
+
+        return session.query(descendants_cte).filter(descendants_cte.c.id == potential_parent_id).first() is not None
+
     def delete_category(self, category_id: int, session: Optional[Session] = None) -> bool:
         """
-        Deletes a category from the database.
+        Deletes a category from the database, preventing deletion if it has children.
 
         Args:
             category_id (int): The ID of the category to delete.
@@ -416,6 +435,11 @@ class Database:
         db = session if session is not None else self.get_session()
         db_category = db.query(model.Category).filter(model.Category.id == category_id).first()
         if db_category:
+            # Check for child categories
+            child_count = db.query(model.Category).filter(model.Category.parent_id == category_id).count()
+            if child_count > 0:
+                return False  # Cannot delete category with children
+                
             db.delete(db_category)
             
             # Only commit if we're managing our own session
@@ -659,6 +683,30 @@ class Database:
         results = query.all()
         print(f"DEBUG: Parent category query returned {len(results)} categories")
         return results
+
+    def create_accounts_batch(self, accounts_data: List[Dict[str, Any]], session: Session) -> List[model.Account]:
+        """Creates multiple accounts in a single atomic operation."""
+        db_accounts = [model.Account(**data) for data in accounts_data]
+        session.add_all(db_accounts)
+        session.flush()
+        return db_accounts
+
+    def create_card_statements_batch(self, statements_data: List[Dict[str, Any]], session: Session) -> List[model.CardStatement]:
+        """Creates multiple card statements in a single atomic operation."""
+        db_statements = [model.CardStatement(**data) for data in statements_data]
+        session.add_all(db_statements)
+        session.flush()
+        return db_statements
+
+    def get_category_by_name(self, name: str, parent_name: Optional[str] = None, session: Optional[Session] = None) -> Optional[model.Category]:
+        """Gets a category by name and optional parent name for specificity."""
+        db = session if session is not None else self.get_session()
+        query = db.query(model.Category).filter(model.Category.name == name)
+        if parent_name:
+            query = query.join(model.Category.parent).filter(model.Category.name == parent_name)
+        else:
+            query = query.filter(model.Category.parent_id.is_(None))
+        return query.first()
 
     # --- Account CRUD Methods ---
     def create_account(self, name: str, account_type: str, bank_name: Optional[str] = None, account_number_last4: Optional[str] = None, file_fingerprint: Optional[str] = None, session: Optional[Session] = None) -> model.Account:
