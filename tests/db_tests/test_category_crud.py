@@ -82,6 +82,7 @@ class TestCategoryCRUD:
         updated_category = db_instance.update_category(category.id, {"name": "Dining"})
 
         # Assert
+        assert updated_category is not None
         assert updated_category.id == category.id
         assert updated_category.name == "Dining"
         assert updated_category.created_at == original_created_at

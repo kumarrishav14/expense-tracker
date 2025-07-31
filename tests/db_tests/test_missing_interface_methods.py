@@ -44,6 +44,68 @@ class TestMissingInterfaceMethods:
         interface.db.create_account("Test Account", "Bank Account", "Test Bank", "1234")
         return interface
 
+    @pytest.mark.sanity
+    def test_critical_api_methods_exist(self, db_interface):
+        """
+        CRITICAL SANITY TEST: API completeness validation
+
+        Tests that all essential architectural methods exist and are callable.
+        This is a critical gate to catch missing API methods early.
+        """
+        # Test 1: Essential batch save methods exist
+        methods_that_must_exist = [
+            'save_categories_table',
+            'save_accounts_table',
+            'save_card_statements_table',
+            'get_card_statements_table',
+            'flag_transaction_as_transfer',
+            'update_statement_status',
+            'bulk_categorize_transactions'
+        ]
+
+        for method_name in methods_that_must_exist:
+            assert hasattr(db_interface, method_name), f"CRITICAL: Missing method {method_name}"
+            method = getattr(db_interface, method_name)
+            assert callable(method), f"CRITICAL: {method_name} is not callable"
+
+    @pytest.mark.sanity
+    def test_transaction_management_methods_exist(self, db_interface):
+        """
+        CRITICAL SANITY TEST: Transaction management API validation
+
+        Tests that explicit transaction management methods exist as required
+        by architectural specifications for proper session management.
+        """
+        transaction_methods = [
+            'begin_transaction',
+            'commit_transaction',
+            'rollback_transaction'
+        ]
+
+        for method_name in transaction_methods:
+            assert hasattr(db_interface, method_name), f"CRITICAL: Missing transaction method {method_name}"
+            method = getattr(db_interface, method_name)
+            assert callable(method), f"CRITICAL: {method_name} is not callable"
+
+    @pytest.mark.sanity
+    def test_return_type_compliance_critical(self, db_interface):
+        """
+        CRITICAL SANITY TEST: Return type architectural compliance
+
+        Tests that methods return proper structured types (OperationResult/BatchOperationResult)
+        as required by architectural specifications.
+        """
+        from core.database.results import OperationResult, BatchOperationResult
+
+        # Test single operation methods return OperationResult
+        single_op_result = db_interface.create_category_hierarchy("Test", "")
+        assert isinstance(single_op_result, OperationResult), f"Expected OperationResult, got {type(single_op_result)}"
+
+        # Test batch operation methods return BatchOperationResult
+        test_df = pd.DataFrame({'name': ['Test Category'], 'parent_category': ['']})
+        batch_result = db_interface.save_categories_table(test_df)
+        assert isinstance(batch_result, BatchOperationResult), f"Expected BatchOperationResult, got {type(batch_result)}"
+
     def test_save_categories_table_method_exists(self, db_interface):
         """
         Test that save_categories_table method exists and works per architecture.

@@ -15,4 +15,5 @@ dependencies = [
     "pdfplumber>=0.11.7",
     "plotly>=6.2.0",
     "streamlit-option-menu",
+    "flake8>=7.3.0",
 ]
