@@ -33,6 +33,7 @@ class DatabaseInterface:
             db_url (str): Database connection URL.
         """
         self.db = Database(db_url)
+        self._current_transaction_id = None
 
     # --- Account Management ---
     def get_accounts_table(self, only_active: bool = False) -> pd.DataFrame:
@@ -45,27 +46,45 @@ class DatabaseInterface:
         } for acc in accounts]
         return pd.DataFrame(data)
 
-    def save_accounts_table(self, df: pd.DataFrame) -> OperationResult:
+    def save_accounts_table(self, df: pd.DataFrame) -> BatchOperationResult:
         try:
             if df.empty:
-                return OperationResult(success=True, affected_rows=0)
+                return BatchOperationResult(success=True, total_processed=0, successful_count=0, failed_count=0)
 
             with self.db.transaction_scope() as session:
                 accounts_data = [{str(k): v for k, v in record.items()} for record in df.to_dict(orient='records')]
                 created_accounts = self.db.create_accounts_batch(accounts_data, session=session)
 
-            return OperationResult(
+                # SERIALIZE while session-bound to prevent DetachedInstanceError
+                serialized_accounts = [
+                    {
+                        'id': acc.id,
+                        'name': acc.name,
+                        'account_type': acc.account_type,
+                        'bank_name': acc.bank_name,
+                        'account_number_last4': acc.account_number_last4,
+                        'is_active': acc.is_active,
+                        'created_at': acc.created_at.isoformat() if acc.created_at else None,
+                        'updated_at': acc.updated_at.isoformat() if acc.updated_at else None
+                    }
+                    for acc in created_accounts
+                ]
+
+            return BatchOperationResult(
                 success=True,
-                affected_rows=len(created_accounts),
-                data={'created_accounts': len(created_accounts)}
+                total_processed=len(df),
+                successful_count=len(created_accounts),
+                failed_count=0,
+                successful_items=serialized_accounts
             )
         except Exception as e:
             error_info = self.db.handle_constraint_error(e)
-            return OperationResult(
+            return BatchOperationResult(
                 success=False,
+                total_processed=len(df),
+                successful_count=0,
+                failed_count=len(df),
                 error_message=error_info['error_message'],
-                error_type=error_info['error_type'],
-                error_category=error_info['error_category'],
                 is_retryable=self.db.is_retryable_error(e)
             )
 
@@ -91,27 +110,45 @@ class DatabaseInterface:
             )
 
     # --- Credit Mapping ---
-    def save_card_statements_table(self, df: pd.DataFrame) -> OperationResult:
+    def save_card_statements_table(self, df: pd.DataFrame) -> BatchOperationResult:
         try:
             if df.empty:
-                return OperationResult(success=True, affected_rows=0)
+                return BatchOperationResult(success=True, total_processed=0, successful_count=0, failed_count=0)
 
             with self.db.transaction_scope() as session:
                 statements_data = [{str(k): v for k, v in record.items()} for record in df.to_dict(orient='records')]
                 created_statements = self.db.create_card_statements_batch(statements_data, session=session)
 
-            return OperationResult(
+                # SERIALIZE while session-bound to prevent DetachedInstanceError
+                serialized_statements = [
+                    {
+                        'id': stmt.id,
+                        'statement_date': stmt.statement_date.isoformat() if stmt.statement_date else None,
+                        'description': stmt.description,
+                        'amount': float(stmt.amount),
+                        'account_id': stmt.account_id,
+                        'account_name': stmt.account.name if stmt.account else None,
+                        'is_processed': stmt.is_processed,
+                        'created_at': stmt.created_at.isoformat() if stmt.created_at else None
+                    }
+                    for stmt in created_statements
+                ]
+
+            return BatchOperationResult(
                 success=True,
-                affected_rows=len(created_statements),
-                data={'created_statements': len(created_statements)}
+                total_processed=len(df),
+                successful_count=len(created_statements),
+                failed_count=0,
+                successful_items=serialized_statements
             )
         except Exception as e:
             error_info = self.db.handle_constraint_error(e)
-            return OperationResult(
+            return BatchOperationResult(
                 success=False,
+                total_processed=len(df),
+                successful_count=0,
+                failed_count=len(df),
                 error_message=error_info['error_message'],
-                error_type=error_info['error_type'],
-                error_category=error_info['error_category'],
                 is_retryable=self.db.is_retryable_error(e)
             )
 
@@ -307,13 +344,13 @@ class DatabaseInterface:
                             print(f"DEBUG: Category not found for row {index}, will create hierarchy: '{row.get('category', '')}' -> '{row.get('sub_category', '')}'")
 
                             # Create categories within the same transaction
-                            hierarchy_created = self._create_category_hierarchy_in_session(
+                            hierarchy_result = self._create_category_hierarchy_in_session(
                                 row.get('category', ''),
                                 row.get('sub_category', ''),
                                 session
                             )
 
-                            if hierarchy_created:
+                            if hierarchy_result.success:
                                 # Re-resolve category_id after creation
                                 category_id = self._resolve_category_id(
                                     row.get('category', ''),
@@ -345,6 +382,23 @@ class DatabaseInterface:
                     session=session
                 )
 
+                # SERIALIZE while session-bound to prevent DetachedInstanceError
+                serialized_transactions = [
+                    {
+                        'id': txn.id,
+                        'description': txn.description,
+                        'amount': float(txn.amount),
+                        'transaction_date': txn.transaction_date.isoformat() if txn.transaction_date else None,
+                        'account_id': txn.account_id,
+                        'account_name': txn.account.name if txn.account else None,
+                        'category_id': txn.category_id,
+                        'category_name': txn.category.name if txn.category else None,
+                        'sub_category_name': txn.category.parent.name if txn.category and txn.category.parent else None,
+                        'created_at': txn.created_at.isoformat() if txn.created_at else None
+                    }
+                    for txn in created_transactions
+                ]
+
                 print(f"DEBUG: Successfully created {len(created_transactions)} transactions in atomic operation")
                 # Transaction will be committed automatically by transaction_scope
 
@@ -353,7 +407,7 @@ class DatabaseInterface:
                 success=True,
                 successful_count=len(df),
                 total_processed=len(df),
-                successful_items=created_transactions
+                successful_items=serialized_transactions
             )
 
         except Exception as e:
@@ -409,7 +463,7 @@ class DatabaseInterface:
 
         return category.id if category else None
 
-    def _create_category_hierarchy_in_session(self, category_name: str, sub_category_name: str, session: Session) -> bool:
+    def _create_category_hierarchy_in_session(self, category_name: str, sub_category_name: str, session: Session) -> OperationResult:
         """
         Create category hierarchy within an existing session (for atomic operations).
 
@@ -419,12 +473,16 @@ class DatabaseInterface:
             session (Session): Database session to use.
 
         Returns:
-            bool: True if hierarchy created/exists successfully, False otherwise.
+            OperationResult: Structured result with success/failure details.
         """
         try:
             if not category_name.strip():
-                print("ERROR: Category name cannot be empty")
-                return False
+                return OperationResult(
+                    success=False,
+                    error_message="Category name cannot be empty",
+                    error_type="validation_error",
+                    error_category="user_input"
+                )
 
             print(f"DEBUG: Creating category hierarchy in session - Category: '{category_name.strip()}', Sub-category: '{sub_category_name.strip()}'")
 
@@ -465,13 +523,28 @@ class DatabaseInterface:
                     print(f"DEBUG: Created new sub-category: '{sub_category.name}' (ID: {sub_category.id}) under parent '{parent_category.name}'")
 
             print(f"DEBUG: Category hierarchy creation in session successful")
-            return True
+            return OperationResult(
+                success=True,
+                affected_rows=1,
+                data={
+                    "parent_category": parent_category.name,
+                    "sub_category": sub_category.name if sub_category else None,
+                    "parent_id": parent_category.id,
+                    "sub_category_id": sub_category.id if sub_category else None
+                }
+            )
 
         except Exception as e:
-            print(f"ERROR: Failed to create category hierarchy in session - Category: '{category_name}', Sub-category: '{sub_category_name}': {str(e)}")
-            return False
+            error_info = self.db.handle_constraint_error(e)
+            return OperationResult(
+                success=False,
+                error_message=error_info['error_message'],
+                error_type=error_info['error_type'],
+                error_category=error_info['error_category'],
+                is_retryable=self.db.is_retryable_error(e)
+            )
 
-    def create_category_hierarchy(self, category_name: str, sub_category_name: str = "") -> bool:
+    def create_category_hierarchy(self, category_name: str, sub_category_name: str = "") -> OperationResult:
         """
         Create category hierarchy if it doesn't exist.
 
@@ -480,12 +553,16 @@ class DatabaseInterface:
             sub_category_name (str): Sub-category name (optional).
 
         Returns:
-            bool: True if hierarchy created/exists successfully, False otherwise.
+            OperationResult: Structured result with success/failure details.
         """
         try:
             if not category_name.strip():
-                print("ERROR: Category name cannot be empty")
-                return False
+                return OperationResult(
+                    success=False,
+                    error_message="Category name cannot be empty",
+                    error_type="validation_error",
+                    error_category="user_input"
+                )
 
             print(f"DEBUG: Creating category hierarchy - Category: '{category_name.strip()}', Sub-category: '{sub_category_name.strip()}'")
 
@@ -520,19 +597,34 @@ class DatabaseInterface:
                     print(f"DEBUG: Created new sub-category: '{sub_category.name}' (ID: {sub_category.id}) under parent '{parent_category.name}'")
 
             print(f"DEBUG: Category hierarchy creation successful")
-            return True
+            return OperationResult(
+                success=True,
+                affected_rows=1,
+                data={
+                    "parent_category": parent_category.name,
+                    "sub_category": sub_category.name if sub_category else None,
+                    "parent_id": parent_category.id,
+                    "sub_category_id": sub_category.id if sub_category else None
+                }
+            )
 
         except Exception as e:
-            print(f"ERROR: Failed to create category hierarchy - Category: '{category_name}', Sub-category: '{sub_category_name}': {str(e)}")
-            return False
+            error_info = self.db.handle_constraint_error(e)
+            return OperationResult(
+                success=False,
+                error_message=error_info['error_message'],
+                error_type=error_info['error_type'],
+                error_category=error_info['error_category'],
+                is_retryable=self.db.is_retryable_error(e)
+            )
 
     # --- Missing Interface Methods (Implementation Required by Architecture) ---
 
-    def save_categories_table(self, df: pd.DataFrame, transaction_id: Optional[str] = None) -> OperationResult:
+    def save_categories_table(self, df: pd.DataFrame, transaction_id: Optional[str] = None) -> BatchOperationResult:
         """Save categories from DataFrame with structured result."""
         try:
             if df.empty:
-                return OperationResult(success=True, affected_rows=0)
+                return BatchOperationResult(success=True, total_processed=0, successful_count=0, failed_count=0)
 
             with self.db.transaction_scope() as session:
                 # Process categories with hierarchy support and enforce uniqueness
@@ -565,18 +657,34 @@ class DatabaseInterface:
                         )
                         created_categories.append(cat)
 
-            return OperationResult(
+                # SERIALIZE while session-bound to prevent DetachedInstanceError
+                serialized_categories = [
+                    {
+                        'id': cat.id,
+                        'name': cat.name,
+                        'parent_id': cat.parent_id,
+                        'parent_name': cat.parent.name if cat.parent else None,
+                        'created_at': cat.created_at.isoformat() if cat.created_at else None,
+                        'updated_at': cat.updated_at.isoformat() if cat.updated_at else None
+                    }
+                    for cat in created_categories
+                ]
+
+            return BatchOperationResult(
                 success=True,
-                affected_rows=len(created_categories),
-                data={'created_categories': len(created_categories)}
+                total_processed=len(df),
+                successful_count=len(created_categories),
+                failed_count=0,
+                successful_items=serialized_categories
             )
         except Exception as e:
             error_info = self.db.handle_constraint_error(e)
-            return OperationResult(
+            return BatchOperationResult(
                 success=False,
+                total_processed=len(df),
+                successful_count=0,
+                failed_count=len(df),
                 error_message=error_info['error_message'],
-                error_type=error_info['error_type'],
-                error_category=error_info['error_category'],
                 is_retryable=self.db.is_retryable_error(e)
             )
 
@@ -650,8 +758,8 @@ class DatabaseInterface:
                         category_id = self._resolve_category_id(category_name, sub_category_name, session)
                         if category_id is None:
                             # Try to create hierarchy, but catch failures for invalid categories
-                            created = self._create_category_hierarchy_in_session(category_name, sub_category_name, session)
-                            if not created:
+                            creation_result = self._create_category_hierarchy_in_session(category_name, sub_category_name, session)
+                            if not creation_result.success:
                                 result.add_failure(rule, f"Failed to create category hierarchy: {category_name} -> {sub_category_name}")
                                 continue
                             # Re-resolve with optimized query after creation
@@ -688,16 +796,47 @@ class DatabaseInterface:
             )
 
     # Transaction Management (Required by Architecture)
-    def begin_transaction(self) -> str:
+    def begin_transaction(self) -> OperationResult:
         """Begin a new transaction context."""
-        # For now, return a dummy transaction ID
-        # Real implementation would create a managed transaction context
-        return "tx_dummy_id"
+        try:
+            import uuid
+            self._current_transaction_id = f"tx_{uuid.uuid4().hex[:8]}"
+            return OperationResult(
+                success=True,
+                data={'transaction_id': self._current_transaction_id}
+            )
+        except Exception as e:
+            return OperationResult(
+                success=False,
+                error_message=f"Failed to begin transaction: {str(e)}"
+            )
 
-    def commit_transaction(self, transaction_id: str) -> OperationResult:
+    def commit_transaction(self) -> OperationResult:
         """Commit current transaction."""
-        return OperationResult(success=True, data={'message': f'Transaction {transaction_id} committed (handled by transaction_scope context manager)'})
+        if self._current_transaction_id is None:
+            return OperationResult(
+                success=False,
+                error_message="No active transaction to commit"
+            )
 
-    def rollback_transaction(self, transaction_id: str) -> OperationResult:
+        transaction_id = self._current_transaction_id
+        self._current_transaction_id = None
+        return OperationResult(
+            success=True,
+            data={'message': f'Transaction {transaction_id} committed (handled by transaction_scope context manager)'}
+        )
+
+    def rollback_transaction(self) -> OperationResult:
         """Rollback current transaction."""
-        return OperationResult(success=True, data={'message': f'Transaction {transaction_id} rolled back (handled by transaction_scope context manager)'})
+        if self._current_transaction_id is None:
+            return OperationResult(
+                success=False,
+                error_message="No active transaction to rollback"
+            )
+
+        transaction_id = self._current_transaction_id
+        self._current_transaction_id = None
+        return OperationResult(
+            success=True,
+            data={'message': f'Transaction {transaction_id} rolled back (handled by transaction_scope context manager)'}
+        )

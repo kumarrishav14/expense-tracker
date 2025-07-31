@@ -37,7 +37,7 @@ def initialize_database():
         for parent, children in default_categories.items():
             if not children:
                 # Create parent category with no children
-                db_interface.create_category_hierarchy(parent, None)
+                db_interface.create_category_hierarchy(parent)
             else:
                 for child in children:
                     db_interface.create_category_hierarchy(parent, child)
