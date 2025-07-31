@@ -37,3 +37,27 @@ This pattern provides several key benefits:
 -   **Implementation Discipline:** All new `db_interface` methods must adhere strictly to this `try...except...translate` pattern.
 -   **No Leaky Exceptions:** Low-level database exceptions are an implementation detail. They should never leak past the `db_interface` boundary to the rest of the application.
 -   **Caller Responsibility:** The application code that calls the `db_interface` is responsible for inspecting the `OperationResult` and taking the appropriate action (e.g., showing an error to the user, retrying the operation).
+
+## Data Transfer Requirements
+
+### **Session-Independent Data**
+-   **No live SQLAlchemy objects** in result structures - objects become detached after atomic operations complete
+-   **Serialized data only** for cross-layer communication to UI and data processor layers
+-   **Session independence** - returned data must remain usable after database session closes
+
+### **Result Data Content**
+-   **OperationResult.data:** Single values (IDs, counts, timestamps) or serialized object data
+-   **BatchOperationResult.data:** List of serialized object data (never live ORM objects)
+-   **Usage Pattern:** Result data consumed by UI layer for display and data processors for further operations
+
+### **Correct Serialization Pattern**
+```python
+# CORRECT: Return serialized data
+result.data = [
+    {"id": 123, "name": "Food", "created_at": "2025-01-15"},
+    {"id": 124, "name": "Transport", "created_at": "2025-01-15"}
+]
+
+# INCORRECT: Return live SQLAlchemy objects  
+result.data = [category_obj1, category_obj2]  # These become detached!
+```

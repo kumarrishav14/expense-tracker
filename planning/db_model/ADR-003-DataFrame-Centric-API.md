@@ -90,6 +90,38 @@ We will implement a **DataFrame-Centric Database API** where:
 -   **Date Handling:** Ensure consistent datetime formatting across all DataFrames
 -   **Error Handling:** Return structured `OperationResult`/`BatchOperationResult` objects, not DataFrame exceptions
 
+## Session Independence Requirement
+
+### **No SQLAlchemy Object Exposure**
+The DataFrame-centric API must maintain **complete abstraction** from the underlying ORM layer:
+
+-   **Input DataFrames:** Application provides human-readable data (names, not IDs)
+-   **Output DataFrames:** Application receives human-readable data (names, not IDs)  
+-   **Result Objects:** Contain serialized data, never live SQLAlchemy objects
+-   **Session Boundaries:** All database sessions are internal to `db_interface` - never exposed
+
+### **Cross-Layer Data Transfer**
+```python
+# CORRECT: Session-independent data transfer
+save_result = db_interface.save_categories_table(df)
+if save_result.success:
+    created_categories = save_result.data  # List of serialized dicts
+    # UI can display: created_categories[0]["name"]
+    # Processors can use: pd.DataFrame(created_categories)
+
+# INCORRECT: Session-dependent object transfer  
+save_result.data = [category_obj1, category_obj2]  # Becomes detached!
+# UI fails: category_obj1.name  # DetachedInstanceError
+```
+
+### **Atomic Operation Principle**
+-   **Save operations are atomic:** Complete transaction scope within `db_interface`
+-   **Session lifecycle:** Created, used, and closed within single operation
+-   **Data persistence:** Returned data represents committed database state
+-   **No session sharing:** Each operation manages its own database session
+
+This ensures the DataFrame-centric API remains **truly abstracted** from database implementation details while providing **usable data** to UI and processor layers.
+
 ## Input Contract Specification
 
 The DataFrame-centric API establishes a **standardized data contract** between processors and the database layer:
