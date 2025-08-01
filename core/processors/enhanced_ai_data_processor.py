@@ -344,6 +344,7 @@ class EnhancedAIDataProcessor(AbstractDataProcessor):
         """
         Processes a single batch of standardized data for categorization.
         """
+        batch_size = len(batch_df)
         data_text = batch_df.to_csv(index=False)
         category_json_string = json.dumps(category_hierarchy, indent=2)
 
@@ -366,14 +367,14 @@ class EnhancedAIDataProcessor(AbstractDataProcessor):
         {data_text}
         ---
 
-        Respond with only the JSON array. Each object must contain 'category' and 'sub_category'.
+        Respond with only the JSON array having exactly {batch_size} objects. Each object must contain 'category' and 'sub_category'.
         """
 
         if self._debug:
             print(f"\n{DebugColors.PROMPT}{'='*50}\n[PASS 3: CATEGORIZATION PROMPT]\n{'='*50}\n{prompt}{DebugColors.ENDC}")
 
         ollama_client = get_ollama_client()
-        llm_response = ollama_client.generate_completion(prompt)
+        llm_response = ollama_client.generate_completion(prompt, model="gemma3:12b")
 
         if self._debug:
             print(f"\n{DebugColors.LLM_OUTPUT}{'='*50}\n[PASS 3: LLM RAW OUTPUT]\n{'='*50}\n{llm_response}{DebugColors.ENDC}")

@@ -22,7 +22,7 @@ class CSVParser:
     making it easy to load financial data from various sources.
     """
     
-    def __init__(self, file_source: Union[str, io.BytesIO], encoding: str = 'utf-8'):
+    def __init__(self, file_source: Union[str, io.BytesIO], encoding: str = 'utf-8-sig'):
         """
         Initialize the parser with the path to the CSV file.
         

@@ -129,7 +129,8 @@ class OllamaClient:
             return False
     
     def generate_completion(self, prompt: str, model: Optional[str] = None, 
-                          stream: bool = False) -> str:
+                          stream: bool = False,
+                          think: bool = False) -> str:
         """
         Generate text completion using Ollama.
         
@@ -150,7 +151,7 @@ class OllamaClient:
             "model": model_name,
             "prompt": prompt,
             "stream": False,  # Keep it simple for now,
-            "think": False,
+            "think": think,
             "options": {
                 "num_ctx": 36000,
             }
