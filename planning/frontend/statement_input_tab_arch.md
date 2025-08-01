@@ -1,109 +1,76 @@
 # Frontend Micro-Architecture: Statement Input Tab
 
 **Author:** AI Architect
-**Date:** July 18, 2025
-**Version:** 2.3
+**Date:** July 31, 2025
+**Status:** Finalized
+**Version:** 2.0
 
 ## 1. Component Overview
 
-This document provides the detailed micro-architecture for the **Statement Input Tab**. This tab is the primary user entry point for uploading and processing new transaction files (PDFs, CSVs, etc.).
+This document provides the detailed micro-architecture for the **Statement Input Tab**. This tab is the primary entry point for user data, handling the upload and initial processing of financial statements.
 
-This design adheres to the principles outlined in the main `frontend_micro_architecture.md` document and reflects the current implementation. It follows a streamlined, two-step user workflow: **Process & Review -> Save**.
+This architecture is based on a **user-driven workflow**, where the user is in full control of associating statements with accounts. This approach prioritizes reliability and simplicity over complex automation.
 
-**Version 2.3 Update:** The sequence diagram has been refined to more accurately represent the architectural interactions, removing internal implementation details for clarity.
+## 2. Core Concept: The Upload State Machine
 
-## 2. Responsibilities
+The tab's UI and logic will operate as a simple state machine, driven by `st.session_state`. The tab can be in one of the following primary states:
 
--   Provide a file uploader widget for supported file types.
--   **Detect encrypted PDFs and prompt the user for a password.**
--   Provide a single action button ("Process & Review") to trigger the entire backend data pipeline.
--   **Display a real-time progress bar** during data processing.
--   Display a final, editable preview of the fully processed and categorized data.
--   Allow users to review and correct AI-assigned categories in the preview table.
--   Provide a mechanism to save the final, user-verified data to the database.
--   Show clear success, error, and progress messages to the user.
+1.  **`AWAITING_UPLOAD`**: The initial state. The UI displays the file uploader widget.
+2.  **`AWAITING_PASSWORD`**: An intermediary state triggered if the user uploads a password-protected PDF.
+3.  **`AWAITING_ACCOUNT_SELECTION`**: The state triggered after a file is successfully uploaded (and decrypted, if necessary). The user is prompted to select an account.
+4.  **`READY_FOR_PROCESSING`**: The state where a file has been uploaded and associated with a user-selected account, and is ready for the main data processing pipeline.
 
-## 3. State Management (`st.session_state`)
+## 3. The User-Driven Workflow
 
--   `st.session_state.processed_df`: A pandas DataFrame holding the fully standardized and categorized data, ready for user review and editing. This is the primary data state for this tab.
--   `st.session_state.upload_error`: A string to hold any error message from the backend pipeline, to be displayed with `st.error()`.
-
-## 4. Component Logic and Sequence (with Password Flow and Progress Callback)
-
-This sequence accurately reflects the **existing implementation** in `frontend/tabs/statement_input_tab.py`. The diagram focuses on the key interactions between components.
+This is the central workflow of the tab. It removes all automatic detection in favor of explicit user control.
 
 ```mermaid
-sequenceDiagram
-    actor User
-    participant UI as Statement Input Tab
-    participant Parser as Parser Backend
-    participant Processor as DataProcessor
-    participant DB as DB Interface
+graph TD
+    A[Start: Awaiting Upload] -->|User uploads file| B{Check File Type};
+    B --> B_PDF{File is PDF};
+    B --> B_CSV[File is CSV];
 
-    User->>+UI: 1. Uploads file
-    
-    alt If file is encrypted PDF
-        UI->>User: 2. Prompts for password
-        User->>+UI: 3. Enters password
-    end
+    B_PDF --> P1{Is PDF Encrypted?};
+    P1 -- Yes --> P2[Await Password];
+    P1 -- No --> C(Awaiting Account Selection);
+    P2 --> C;
+    B_CSV --> C;
 
-    Note over UI: Displays "Process & Review" button.
+    C --> D{Display Account Dropdown};
+    D -->|User selects Existing Account| F(Ready for Processing);
+    D -->|User selects "--- Add New Account ---"| E{Show 'Add Account' Form In-Place};
+    E -->|User saves new account| F;
 
-    User->>+UI: 4. Clicks "Process & Review"
-    Note over UI: Displays progress bar at 0%.
-
-    UI->>+Parser: 5. Parse file (with password if provided)
-    Parser-->>-UI: 6. Returns raw DataFrame
-    
-    Note over UI: UI calls the processor, passing the callback function.
-    UI->>+Processor: 7. process_raw_data(raw_df, on_progress=...)
-    
-    loop During Processing
-        Processor-->>UI: 8. on_progress(progress, message)
-        Note over UI: Updates progress bar with new value and message.
-    end
-
-    Processor-->>-UI: 9. Returns final, processed_df
-
-    UI->>+DB: 10. get_all_categories()
-    DB-->>-UI: 11. Returns list of categories for dropdown
-    Note over UI: Hides progress bar. Displays editable table (st.data_editor).
-    
-    User->>+UI: 12. Reviews and corrects categories
-    User->>+UI: 13. Clicks "Confirm & Save"
-    
-    UI->>+DB: 14. save_transactions_table(final_df)
-    DB-->>-UI: 15. Returns success/failure
-    UI-->>-User: 16. Displays final success message
+    F -->|User clicks "Process"| G[Call Parser & Processor];
+    G --> H(Processing Complete);
 ```
 
-### **UI Implementation Details**
+## 4. UI and Component Design
 
-The frontend implementation is straightforward:
+### 4.1. State 1: `AWAITING_UPLOAD`
+-   **UI:** A standard `st.file_uploader` is displayed.
+-   **Logic:** When a file is uploaded, the component checks if it is a PDF. If so, it checks for encryption and may transition to `AWAITING_PASSWORD`. Otherwise, it transitions directly to `AWAITING_ACCOUNT_SELECTION`.
 
-1.  **Instantiate UI Elements:** Before calling the processor, create the progress bar element:
-    ```python
-    progress_bar = st.progress(0.0, text="Starting processing...")
-    ```
+### 4.2. State 2: `AWAITING_PASSWORD`
+-   **UI:** The file uploader is hidden. The UI displays a simple `st.text_input` for the password and an "Unlock" button.
+-   **Logic:** On success, it stores the decrypted file object in session state and transitions to `AWAITING_ACCOUNT_SELECTION`. On failure, it shows an error message.
 
-2.  **Define the Callback:** Create a simple function that matches the required `(float, str)` signature and whose only job is to update the UI element.
-    ```python
-    def update_progress_in_ui(progress_value, message_text):
-        progress_bar.progress(progress_value, text=message_text)
-    ```
+### 4.3. State 3: `AWAITING_ACCOUNT_SELECTION`
+-   **UI:** The file uploader and password input are hidden. The UI displays:
+    -   A message: "Please select the account for this statement."
+    -   An `st.selectbox` populated with all active accounts from the database, plus a special `"--- Add New Account ---"` option.
+    -   If "Add New Account" is selected, an `st.expander` appears with a form to create a new account.
+-   **Logic:** Handles the selection of an existing account or the creation of a new one. Once an account is determined, the state transitions to `READY_FOR_PROCESSING`.
 
-3.  **Invoke the Processor:** Pass the defined function as the `on_progress` argument.
-    ```python
-    final_df = data_processor.process_raw_data(
-        raw_df, 
-        on_progress=update_progress_in_ui
-    )
-    ```
+### 4.4. State 4: `READY_FOR_PROCESSING`
+-   **UI:** All previous inputs are hidden. The UI displays:
+    -   A confirmation message: "File ready for account '[Selected Account Name]'."
+    -   A "Process Statement" button.
+-   **Logic:** When the user clicks "Process Statement," the file data and the selected `account_id` are sent to the main data processing pipeline.
 
-This design correctly decouples the UI from the backend. The `DataProcessor` knows nothing about `st.progress`; it only knows that it has an optional function to call. The UI is responsible for providing a function that knows how to update its own state.
+## 5. State Management
 
-## 5. Error Handling
+-   The entire workflow is orchestrated by a single session state variable, e.g., `st.session_state.upload_flow_state`.
+-   Other session state variables will be used to hold the uploaded file data (`st.session_state.uploaded_file_data`) and the determined `account_id` across reruns.
 
--   The UI **must** wrap the entire backend pipeline call (parsing and processing) in a single `try...except ValueError` block.
--   Any `ValueError` raised from either the `Parser` or the `DataProcessor` will be caught and its message will be stored in `st.session_state.upload_error` and displayed to the user using `st.error()`. This provides a single, clean point for error feedback.
--   The progress bar should be updated to 100% and hidden or removed upon successful completion or when an error occurs to avoid a stalled UI element.
+This architecture ensures that no transaction is ever processed without being explicitly linked to a user-selected account, providing a robust and user-friendly data ingestion pipeline.

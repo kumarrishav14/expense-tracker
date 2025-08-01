@@ -1,52 +1,80 @@
-# Frontend Micro-Architecture: Settings Tab
+# Settings Tab Architecture
 
-**Author:** AI Architect
-**Date:** July 10, 2025
+**Component:** `frontend.tabs.settings_tab`  
+**Last Updated:** July 31, 2025  
+**Status:** FINALIZED
 
-## 1. Component Overview
+---
 
-This document provides the detailed micro-architecture for the **Settings Tab**. This tab serves as the application's configuration center, allowing the user to manage backend services and other preferences. The initial focus is on configuring the Ollama AI integration.
+## 1. **What & Why**
 
-This design adheres to the principles outlined in the main `frontend_micro_architecture.md` document.
+**Purpose:** This component provides the user interface for managing all global application settings, including AI configurations and custom categorization rules.
 
-## 2. Responsibilities
+**Key Decisions:**
+- **Centralized Form (`st.form`)**: All settings are managed within a single form to ensure changes are saved atomically with one user action.
+- **Direct `SettingsManager` Interaction**: The UI interacts exclusively with the `SettingsManager` singleton, which is the single source of truth for all configuration, avoiding the use of `st.session_state` for settings data.
 
--   Load the current Ollama settings from the configuration source when the tab is first displayed.
--   Provide text input widgets for the user to view and edit the Ollama server URL, model name, and request timeout.
--   Save the updated settings to the `ollama_config.json` file via the configuration manager.
--   Display a confirmation message to the user upon successfully saving the settings.
+---
 
-## 3. State Management (`st.session_state`)
+## 2. **Where It Fits**
 
--   `st.session_state.ollama_settings`: An `OllamaSettings` dataclass object holding the current configuration values. This is used to populate the input widgets and ensure the state persists across reruns.
+```
+┌───────────────┐      ┌──────────────┐      ┌─────────────────┐
+│     User      │----▶ │ Settings Tab │----▶ │ SettingsManager │
+│ (via browser) │      │     (UI)     │      │    (Backend)    │
+└───────────────┘      └──────────────┘      └─────────────────┘
+```
 
-## 4. Component Logic and Sequence
+**Depends On:**
+- **Streamlit:** For all UI rendering.
+- **`core.config.settings_manager`:** To read the current settings and to save updated settings.
 
-This sequence details the workflow for loading and saving settings, ensuring a clear separation between the UI and the backend configuration logic.
+**Used By:**
+- **`frontend.app`:** The main application shell renders this component as one of the primary tabs.
+
+---
+
+## 3. **Core API**
+
+The Settings Tab exposes a single public function to the main application shell.
+
+```python
+def render() -> None:
+    """
+    Renders the entire Settings Tab UI, including the settings form,
+    expandable sections for different setting groups, and the save button.
+    Handles the logic for loading data from and saving data to the SettingsManager.
+    """
+    pass
+```
+
+---
+
+## 4. **Data Flow Diagram**
+
+This diagram shows the interaction between the user, the UI, and the backend `SettingsManager` when loading and saving settings.
 
 ```mermaid
 sequenceDiagram
     participant User
     participant UI as Settings Tab
-    participant ConfigManager as OllamaConfigManager
+    participant SM as SettingsManager
 
-    Note over UI, ConfigManager: On initial page load
-    UI->>+ConfigManager: 1. load_settings()
-    ConfigManager-->>-UI: 2. Returns OllamaSettings object
-    UI->>UI: 3. Stores settings in session_state
-    Note over UI: UI renders, populating input widgets from session_state.
+    User->>+UI: Loads Settings Tab
+    UI->>+SM: get_app_settings()
+    SM-->>-UI: Returns current settings object to populate form
 
-    User->>+UI: 4. Modifies settings in text inputs
-    User->>+UI: 5. Clicks "Save Settings"
+    User->>UI: Modifies Ollama settings in form
+    User->>UI: Modifies categorization rules in text area
+    User->>+UI: Clicks "Save All Settings"
 
-    UI->>UI: 6. Creates new OllamaSettings object from widget values
-    UI->>+ConfigManager: 7. save_settings(new_settings_object)
-    ConfigManager-->>-UI: 8. Returns success
+    UI->>+SM: update_ollama_settings(...)
+    SM-->>UI: Success
 
-    UI-->>-User: 9. Displays confirmation message (st.success)
+    UI->>+SM: update_categorization_rules(...)
+    SM-->>UI: Success
+
+    Note over SM: The SettingsManager is responsible for persisting these changes to disk internally.
+
+    UI-->>-User: Shows "Settings Saved!" message
 ```
-
-## 5. Error Handling
-
--   The UI **must** wrap the call to `save_settings` in a `try...except` block.
--   If an exception occurs (e.g., due to file permission errors when writing the `ollama_config.json` file), the error will be caught and displayed to the user via `st.error()`.
