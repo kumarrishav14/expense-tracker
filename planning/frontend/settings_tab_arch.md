@@ -1,115 +1,80 @@
-# Frontend Micro-Architecture: Settings Tab
+# Settings Tab Architecture
 
-**Author:** AI Architect
-**Date:** July 24, 2025
-**Version:** 2.0
+**Component:** `frontend.tabs.settings_tab`  
+**Last Updated:** July 31, 2025  
+**Status:** DRAFT
 
-## 1. Component Overview
+---
 
-This document provides the detailed micro-architecture for the **Settings Tab**. This tab serves as the application's configuration center.
+## 1. **What & Why**
 
-**Version 2.0 Update:** This version introduces the **Account Management** feature, allowing users to create, edit, and close their financial accounts. This is in addition to the existing **Ollama Configuration** functionality.
+**Purpose:** This component provides the user interface for managing all global application settings, including AI configurations and custom categorization rules.
 
-This design adheres to the principles outlined in the main `frontend_micro_architecture.md` document.
+**Key Decisions:**
+- **Centralized Form (`st.form`)**: All settings are managed within a single form to ensure changes are saved atomically with one user action.
+- **Direct `SettingsManager` Interaction**: The UI interacts exclusively with the `SettingsManager` singleton, which is the single source of truth for all configuration, avoiding the use of `st.session_state` for settings data.
 
-## 2. Responsibilities
+---
 
-### Ollama Configuration
--   Load the current Ollama settings from the configuration source.
--   Provide text input widgets for the user to view and edit the Ollama server URL, model name, and request timeout.
--   Save the updated settings to the `ollama_config.json` file.
+## 2. **Where It Fits**
 
-### Account Management
--   Provide a clear interface for viewing all user-created accounts.
--   Allow a user to create a new financial account at any time.
--   Allow a user to edit the details of an existing account.
--   Provide a safe mechanism for a user to close an account without losing historical data (soft deletion).
-
-## 3. State Management (`st.session_state`)
-
--   `st.session_state.ollama_settings`: An `OllamaSettings` dataclass object holding the current configuration values.
--   `st.session_state.show_account_modal`: A boolean flag to control the visibility of the Add/Edit Account modal dialog.
--   `st.session_state.editing_account_id`: Stores the ID of the account being edited to pre-populate the form.
-
-## 4. Component Logic and Sequence
-
-This sequence details the workflow for loading and saving settings, ensuring a clear separation between the UI and the backend configuration logic.
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant UI as Settings Tab
-    participant ConfigManager as OllamaConfigManager
-
-    Note over UI, ConfigManager: On initial page load
-    UI->>+ConfigManager: 1. load_settings()
-    ConfigManager-->>-UI: 2. Returns OllamaSettings object
-    UI->>UI: 3. Stores settings in session_state
-    Note over UI: UI renders, populating input widgets from session_state.
-
-    User->>+UI: 4. Modifies settings in text inputs
-    User->>+UI: 5. Clicks "Save Settings"
-
-    UI->>UI: 6. Creates new OllamaSettings object from widget values
-    UI->>+ConfigManager: 7. save_settings(new_settings_object)
-    ConfigManager-->>-UI: 8. Returns success
-
-    UI-->>-User: 9. Displays confirmation message (st.success)
+```
+┌───────────────┐      ┌──────────────┐      ┌─────────────────┐
+│     User      │----▶ │ Settings Tab │----▶│ SettingsManager  │
+│ (via browser) │      │     (UI)     │      │    (Backend)    │
+└───────────────┘      └──────────────┘      └─────────────────┘
 ```
 
-## 5. Error Handling
+**Depends On:**
+- **Streamlit:** For all UI rendering.
+- **`core.config.settings_manager`:** To read the current settings and to save updated settings.
 
--   The UI **must** wrap calls to save settings or account data in a `try...except` block.
--   If an exception occurs (e.g., due to file permission errors or database constraints), the error will be caught and displayed to the user via `st.error()`.
+**Used By:**
+- **`frontend.app`:** The main application shell renders this component as one of the primary tabs.
 
-## 6. Feature: Account Management
+---
 
-This section details the UI and logic for the manual account management feature.
+## 3. **Core API**
 
-### 6.1. Main View
+The Settings Tab exposes a single public function to the main application shell.
 
--   **Layout:** A table displaying all existing accounts, fetched via `db_interface.get_accounts_table()`. The table will show `name`, `account_type`, `bank_name`, and `status` (`Active` or `Closed`).
--   **Actions:** Each row will have an "Edit" button and a "Mark as Closed" button (disabled for closed accounts). An "Add New Account" button will be placed above the list.
+```python
+def render() -> None:
+    """
+    Renders the entire Settings Tab UI, including the settings form,
+    expandable sections for different setting groups, and the save button.
+    Handles the logic for loading data from and saving data to the SettingsManager.
+    """
+    pass
+```
 
-### 6.2. "Add/Edit Account" Workflow
+---
 
--   **UI:** A modal dialog (`st.dialog`) triggered by the action buttons.
--   **Form Fields:** `Account Name`, `Account Type`, `Bank Name`, `Account Number (Last 4)`.
--   **Action:** On submission, the UI calls the appropriate `db_interface` method (`save_accounts_table` or `update_account`).
+## 4. **Data Flow Diagram**
 
-### 6.3. "Close Account" Workflow
-
--   **UI:** A confirmation dialog (`st.dialog`) to prevent accidental closure.
--   **Action:** On confirmation, the UI calls `db_interface.update_account()` with `is_active=False`.
-
-### 6.4. Component Interaction Sequence
+This diagram shows the interaction between the user, the UI, and the backend `SettingsManager` when loading and saving settings.
 
 ```mermaid
 sequenceDiagram
     participant User
     participant UI as Settings Tab
-    participant DB as DB Interface
+    participant SM as SettingsManager
 
-    User->>+UI: 1. Navigates to Settings Tab
-    UI->>+DB: 2. get_accounts_table()
-    DB-->>-UI: 3. Returns DataFrame of all accounts
-    UI-->>-User: 4. Renders the account list
+    User->>+UI: Loads Settings Tab
+    UI->>+SM: get_app_settings()
+    SM-->>-UI: Returns current settings object to populate form
 
-    alt Add New Account
-        User->>+UI: 5a. Clicks "Add New Account"
-        UI-->>-User: 6a. Shows empty account form
-        User->>+UI: 7a. Fills form and clicks "Save"
-        UI->>+DB: 8a. save_accounts_table(new_account_df)
-        DB-->>-UI: 9a. Returns success
-        UI->>UI: 10a. Reruns to refresh account list
-    end
+    User->>UI: Modifies Ollama settings in form
+    User->>UI: Modifies categorization rules in text area
+    User->>+UI: Clicks "Save All Settings"
 
-    alt Close Account
-        User->>+UI: 5c. Clicks "Mark as Closed"
-        UI-->>-User: 6c. Shows confirmation dialog
-        User->>+UI: 7c. Clicks "Confirm"
-        UI->>+DB: 8c. update_account(account_id, {'is_active': False})
-        DB-->>-UI: 9c. Returns success
-        UI->>UI: 10c. Reruns to refresh account list
-    end
+    UI->>+SM: update_ollama_settings(...)
+    SM-->>UI: Success
+
+    UI->>+SM: update_categorization_rules(...)
+    SM-->>UI: Success
+
+    Note over SM: The SettingsManager is responsible for persisting these changes to disk internally.
+
+    UI-->>-User: Shows "Settings Saved!" message
 ```
