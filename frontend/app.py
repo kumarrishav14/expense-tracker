@@ -15,7 +15,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from frontend.tabs import dashboard_tab, statement_input_tab, settings_tab
+from frontend.tabs import dashboard_tab, statement_input_tab, settings_tab, accounts_tab_simple
 from core.database.seeder import initialize_database
 
 def main():
@@ -30,8 +30,8 @@ def main():
     # --- State-aware Navigation using streamlit-option-menu ---
     selected_tab = option_menu(
         menu_title=None,  # required
-        options=["Dashboard", "Statement Input", "Settings"],
-        icons=['house', 'cloud-upload', 'gear'],  # optional
+        options=["Dashboard", "Statement Input", "Accounts", "Settings"],
+        icons=['house', 'cloud-upload', 'bank', 'gear'],  # optional
         key="main_menu", # Use key for built-in state management
         orientation="horizontal",
     )
@@ -41,6 +41,8 @@ def main():
         dashboard_tab.render()
     elif selected_tab == "Statement Input":
         statement_input_tab.render()
+    elif selected_tab == "Accounts":
+        accounts_tab_simple.render()
     elif selected_tab == "Settings":
         settings_tab.render()
 
