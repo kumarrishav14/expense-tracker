@@ -4,7 +4,6 @@ This module provides a centralized, type-safe manager for all application settin
 
 import json
 from pathlib import Path
-from typing import Optional
 
 from .models import AppSettings, OllamaSettings
 
@@ -14,7 +13,7 @@ class SettingsManager:
     def __init__(self, settings_path: str = "settings.json"):
         """Initializes the manager and loads settings from disk."""
         self.settings_path = Path(settings_path)
-        self.settings: Optional[AppSettings] = None
+        self.settings: AppSettings  # Guaranteed to be loaded by self.load()
         self.load()
 
     def load(self) -> AppSettings:
@@ -28,38 +27,30 @@ class SettingsManager:
                     data = json.load(f)
                 self.settings = AppSettings(**data)
             except (json.JSONDecodeError, TypeError):
+                # If the file is corrupted or invalid, create a default and overwrite
                 self.settings = AppSettings()
                 self.save()
         return self.settings
 
     def save(self) -> None:
         """Persists the current in-memory settings back to the JSON file."""
-        if self.settings:
-            with open(self.settings_path, 'w') as f:
-                json.dump(self.settings.model_dump(), f, indent=4)
+        with open(self.settings_path, 'w') as f:
+            json.dump(self.settings.model_dump(), f, indent=4)
 
     def get_app_settings(self) -> AppSettings:
         """Returns the entire Pydantic settings object."""
-        if not self.settings:
-            return self.load()
         return self.settings
 
     def get_ollama_settings(self) -> OllamaSettings:
         """Returns the Ollama-specific settings."""
-        if not self.settings:
-            self.load()
         return self.settings.ollama
 
     def get_categorization_rules(self) -> str:
         """Returns the user's custom categorization rules as a single string."""
-        if not self.settings:
-            self.load()
         return self.settings.categorization_rules
 
     def update_ollama_settings(self, host: str, model: str, timeout: int) -> None:
         """Updates the Ollama settings and saves to disk."""
-        if not self.settings:
-            self.load()
         self.settings.ollama.host = host
         self.settings.ollama.model = model
         self.settings.ollama.timeout = timeout
@@ -67,8 +58,6 @@ class SettingsManager:
 
     def update_categorization_rules(self, new_rules_text: str) -> None:
         """Updates the categorization rules text and saves to disk."""
-        if not self.settings:
-            self.load()
         self.settings.categorization_rules = new_rules_text
         self.save()
 

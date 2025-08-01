@@ -2,7 +2,7 @@
 
 **Component:** `frontend.tabs.settings_tab`  
 **Last Updated:** July 31, 2025  
-**Status:** DRAFT
+**Status:** FINALIZED
 
 ---
 
@@ -20,7 +20,7 @@
 
 ```
 ┌───────────────┐      ┌──────────────┐      ┌─────────────────┐
-│     User      │----▶ │ Settings Tab │----▶│ SettingsManager  │
+│     User      │----▶ │ Settings Tab │----▶ │ SettingsManager │
 │ (via browser) │      │     (UI)     │      │    (Backend)    │
 └───────────────┘      └──────────────┘      └─────────────────┘
 ```
