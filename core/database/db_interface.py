@@ -123,13 +123,15 @@ class DatabaseInterface:
                 serialized_statements = [
                     {
                         'id': stmt.id,
-                        'statement_date': stmt.statement_date.isoformat() if stmt.statement_date else None,
-                        'description': stmt.description,
-                        'amount': float(stmt.amount),
                         'account_id': stmt.account_id,
                         'account_name': stmt.account.name if stmt.account else None,
-                        'is_processed': stmt.is_processed,
-                        'created_at': stmt.created_at.isoformat() if stmt.created_at else None
+                        'statement_date': stmt.statement_date.isoformat() if stmt.statement_date else None,
+                        'start_date': stmt.start_date.isoformat() if stmt.start_date else None,
+                        'end_date': stmt.end_date.isoformat() if stmt.end_date else None,
+                        'total_due': float(stmt.total_due) if stmt.total_due else None,
+                        'status': stmt.status,
+                        'created_at': stmt.created_at.isoformat() if stmt.created_at else None,
+                        'updated_at': stmt.updated_at.isoformat() if stmt.updated_at else None
                     }
                     for stmt in created_statements
                 ]

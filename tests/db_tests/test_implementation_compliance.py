@@ -50,13 +50,12 @@ class TestCriticalImplementationBugs:
         return interface
 
     @pytest.mark.sanity
-    def test_card_statement_serialization_bug_002(self, db_interface: DatabaseInterface):
+    def test_card_statement_serialization_bug_002_fixed(self, db_interface: DatabaseInterface):
         """
-        CRITICAL SANITY TEST: BUG-002 - CardStatement serialization fails
+        CRITICAL SANITY TEST: BUG-002 - CardStatement serialization FIXED
 
-        Tests the critical CardStatement serialization bug where save_card_statements_table()
-        attempts to access non-existent fields (description, amount, is_processed).
-        This is a production-blocking bug that breaks all card statement functionality.
+        Verifies that the CardStatement serialization bug has been FIXED.
+        The save_card_statements_table() method should now work correctly with proper attributes.
         """
         # Arrange
         account = db_interface.db.create_account(name="Credit Card", account_type="Credit Card")
@@ -64,26 +63,28 @@ class TestCriticalImplementationBugs:
             'account_id': [account.id],
             'statement_date': ['2024-01-15'],
             'total_due': [1000.00],
-            'status': ['UNPAID']
+            'status': ['UNPAID'],
+            'start_date': ['2023-12-16'],
+            'end_date': ['2024-01-15']
         })
 
-        # Act & Assert - This should expose BUG-002
-        try:
-            result = db_interface.save_card_statements_table(df)
-            if not result.success:
-                # Bug is present - serialization fails
-                assert "description" in result.error_message or "amount" in result.error_message
-                # This is expected until BUG-002 is fixed
-                return
-            else:
-                # Bug might be fixed - verify successful operation
-                assert isinstance(result, BatchOperationResult)
-                assert result.success is True
-                assert result.successful_count == 1
-        except AttributeError as e:
-            # Bug definitely present - accessing non-existent fields
-            assert any(field in str(e) for field in ['description', 'amount', 'is_processed'])
-            pytest.fail(f"BUG-002 CONFIRMED: CardStatement serialization bug - {str(e)}")
+        # Act & Assert - This should now SUCCEED
+        result = db_interface.save_card_statements_table(df)
+        assert result.success is True, "BUG-002 has been FIXED - CardStatement serialization should work"
+        assert result.successful_count == 1, "Should successfully create 1 card statement"
+        assert len(result.successful_items) == 1, "Should return 1 serialized statement"
+        
+        # Verify correct attributes are present in serialized result
+        serialized_stmt = result.successful_items[0]
+        expected_attrs = ['id', 'account_id', 'account_name', 'statement_date', 'start_date', 
+                         'end_date', 'total_due', 'status', 'created_at', 'updated_at']
+        for attr in expected_attrs:
+            assert attr in serialized_stmt, f"Missing expected attribute: {attr}"
+        
+        # Verify no incorrect attributes from the original bug
+        incorrect_attrs = ['description', 'amount', 'is_processed']
+        for attr in incorrect_attrs:
+            assert attr not in serialized_stmt, f"Bug attribute still present: {attr}"
 
     @pytest.mark.sanity
     def test_session_isolation_critical_validation(self, db_interface: DatabaseInterface):
@@ -326,10 +327,10 @@ class TestCriticalImplementationBugs:
             {'account_id': account.id, 'statement_date': '2024-02-01', 'total_due': 1500.0},
         ])
 
-        # This currently fails due to serialization bug accessing non-existent fields
+        # This should now SUCCEED - the bug has been fixed
         result = db_interface.save_card_statements_table(statements_df)
-        assert result.success is False, "Currently fails due to CardStatement serialization bug"
-        assert "'CardStatement' object has no attribute 'description'" in result.error_message
+        assert result.success is True, "BUG-002 has been FIXED - CardStatement serialization should work"
+        assert result.successful_count == 2, "Should successfully create 2 card statements"
 
 
 class TestArchitecturalComplianceGaps:
