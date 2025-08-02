@@ -1,8 +1,9 @@
 # Enhanced AI-Powered Data Processor Micro-Architecture
 
 **Author:** AI Architect
-**Date:** July 24, 2025
-**Version:** 1.0
+**Date:** July 31, 2025
+**Status:** Finalized
+**Version:** 2.0
 
 ## 1. Component Overview
 
@@ -21,7 +22,8 @@ The component continues to adhere to the established and effective patterns:
 
 1.  **Strategy Pattern:** Implements the `AbstractDataProcessor` interface, ensuring it is a plug-and-play replacement for other processors.
 2.  **Decorator Pattern:** The `process_raw_data` method is wrapped by `@enforce_output_schema` to guarantee the final output DataFrame is always compliant with the application's data contract.
-3.  **Callback Pattern:** It accepts an `on_progress` callback to report progress to the UI layer without creating a hard dependency.
+3.  **Dependency Injection:** The processor receives dependencies like user-defined rules via its method parameters, making it decoupled and highly testable.
+4.  **Callback Pattern:** It accepts an `on_progress` callback to report progress to the UI layer without creating a hard dependency.
 
 ## 3. Position in System Architecture
 
@@ -61,13 +63,14 @@ The processor's external position in the system is unchanged. It remains a bridg
     -   Use an LLM to determine which of these remaining columns best represents the transaction `description`.
 -   **Output:** A `SemanticMapping` object.
 
-### **Pass 3: Extraction (Pandas) & Categorization (AI)**
--   **Scope:** To transform the raw data and apply business logic in an efficient, batched manner.
+### **Pass 3: Pass 3: Extraction (Pandas) & Enhanced Categorization (AI)**
+-   **Scope:** To transform the raw data and apply business logic, guided by user-defined rules.
 -   **Responsibilities:**
     -   Apply the mapping rules from Pass 1 and Pass 2 to the full raw DataFrame using `pandas` to create a clean, standardized `mapped_data` dataset.
     -   Fetch the list of valid categories from the `DBInterface`.
+    -   **Receive plain-English user rules via dependency injection.**
     -   Split the `mapped_data` into smaller batches for efficient processing.
-    -   For each batch, use an LLM to assign categories, providing the fetched category list as context in the prompt to constrain the output.
+    -   For each batch, use an LLM to assign categories, providing the fetched category list and the **user's custom rules** as context in an enhanced prompt.
 -   **Output:** The final, processed DataFrame.
 
 ## 5. Component Logic: The Three-Pass Model
@@ -81,7 +84,7 @@ sequenceDiagram
     participant DB as DBInterface
     participant Ollama as LLM
 
-    Caller->>+E_AIDP: 1. process_raw_data(raw_df, on_progress=...)
+    Caller->>+E_AIDP: 1. process_raw_data(raw_df, account_id, custom_rules_text,  on_progress=...)
 
     Note over E_AIDP: **Pass 1: Structural Analysis**
     E_AIDP->>E_AIDP: 2. Create representative sample from raw_df
@@ -95,18 +98,19 @@ sequenceDiagram
     Ollama-->>-E_AIDP: 8. Return `SemanticMapping` object
     E_AIDP-->>Caller: 9. on_progress(0.66, "Semantic mapping complete")
 
-    Note over E_AIDP: **Pass 3: Extraction & Categorization**
+    Note over E_AIDP: **Pass 3: Enhanced Categorization**
     E_AIDP->>E_AIDP: 10. Apply all mappings to raw_df to create `mapped_data`
     E_AIDP->>+DB: 11. get_categories_table()
     DB-->>-E_AIDP: 12. Return category list
     E_AIDP->>E_AIDP: 13. Split `mapped_data` into batches
     loop For each batch
-        E_AIDP->>+Ollama: 14. Send "Categorization Prompt" for the batch
-        Ollama-->>-E_AIDP: 15. Return categorized batch
-        E_AIDP-->>Caller: 16. on_progress(0.66 + (current_batch / total_batches) * 0.34, "Categorizing...")
+        E_AIDP->>E_AIDP: 14. Build **Enhanced Prompt** with batch data, category list, and custom_rules_text
+        E_AIDP->>+Ollama: 15. Send "Enhanced Categorization Prompt"
+        Ollama-->>-E_AIDP: 16. Return categorized batch
+        E_AIDP-->>Caller: 17. on_progress(0.66 + (current_batch / total_batches) * 0.34, "Categorizing...")
     end
-    E_AIDP->>E_AIDP: 17. Aggregate categorized batches
-    E_AIDP->>-Caller: 18. Return final, schema-compliant DataFrame
+    E_AIDP->>E_AIDP: 18. Aggregate categorized batches
+    E_AIDP->>-Caller: 19. Return final, schema-compliant DataFrame
 ```
 
 ## 6. Developer Schemas and Implementation Notes
@@ -168,8 +172,9 @@ This provides a comprehensive view of headers, footers, and general data pattern
 
 -   **Configuration:** Key parameters like sample sizes should be defined as configurable class-level variables.
 -   **Immutability:** The original `raw_data` DataFrame should be treated as immutable. Each pass or sub-step should return a new DataFrame or data structure.
--   **Prompt Engineering:** Each pass should have a dedicated, fine-tuned prompt that asks a very specific question, avoiding the complexity of a single, monolithic prompt.
+-   **Prompt Engineering:** The prompt for Pass 3 (Categorization) will be enhanced to include the user's custom rules, instructing the AI to prioritize them. This is achieved by passing the rules into the `process_raw_data` method.
 -   **Progress Update:** Sample progress update logic has been provided. But the implementation can be changed as per development needs.
+-   **is_transfer Upddate:** For the initial implemenation we will keep this set to false by default and let user map it.
 
 ## 7. Error Handling
 
@@ -181,24 +186,4 @@ The multi-pass design allows for more granular error handling:
 
 ## 8. Interface and Output Contract
 
-A key advantage of this architecture is that the external contract remains unchanged. The complexity is entirely encapsulated within the component.
-
-```python
-# In core/processors/abstract_processor.py
-from typing import Callable, Optional
-import pandas as pd
-
-class AbstractDataProcessor(ABC):
-    
-    @abstractmethod
-    @enforce_output_schema
-    def process_raw_data(
-        self, 
-        df: pd.DataFrame, 
-        on_progress: Optional[Callable[[float, str], None]] = None
-    ) -> pd.DataFrame:
-        """
-        Processes a raw DataFrame and returns a standardized DataFrame.
-        """
-        pass
-```
+Refer to the [Abstract Processor Interface ADR](./ADR-001-Abstract-Processor-Interface.md) for the base input/output contracts. This component will implement the updated interface which includes the `custom_rules_text` parameter in the `process_raw_data` method.
