@@ -16,4 +16,5 @@ dependencies = [
     "plotly>=6.2.0",
     "streamlit-option-menu",
     "flake8>=7.3.0",
+    "dotenv>=0.9.9",
 ]
